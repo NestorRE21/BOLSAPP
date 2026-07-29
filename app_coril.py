@@ -294,8 +294,8 @@ if st.session_state.mode is None:
     with cm2:
         st.markdown("#### 🤖 Automático")
         st.caption("El sistema genera las views por ti usando el framework de "
-                   "Grinold-Kahn (α = volatilidad · IC · score). Solo eliges activos y perfil.")
-        st.markdown("- Views generadas por momentum 12-1 estandarizado\n"
+                   "Grinold-Kahn (α = volatilidad · IC · score), combinando momentum y baja volatilidad. Solo eliges activos y perfil.")
+        st.markdown("- Views generadas por dos factores: momentum 12-1 y baja volatilidad\n"
                     "- IC conservador (0.05, forecaster \"bueno\")\n"
                     "- Portafolio y proyecciones automáticos")
         if st.button("Usar modo Automático", type="primary", use_container_width=True):
@@ -434,7 +434,8 @@ with tab3:
                 for x in ["mc","stress"]:
                     if x in st.session_state: del st.session_state[x]
             st.success("Las expectativas de retorno se calcularon solas con el método "
-                       "Grinold-Kahn (momentum de los últimos 12 meses). "
+                       "Grinold-Kahn, combinando dos señales: el momentum de los últimos "
+                       "12 meses y la baja volatilidad de cada activo. "
                        f"Nivel de confianza del pronóstico: IC = {st.session_state.get('gk_ic',0.05):.2f}. "
                        "Cualquier cambio en activos o perfil actualiza todo al instante.")
         else:
