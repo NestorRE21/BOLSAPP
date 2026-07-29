@@ -18,6 +18,10 @@ EJ = ["AAPL","MSFT","NVDA","JNJ","KO","QQQ"]
 C_RV,C_RF,C_OPT = "#2E5E8C","#2CA02C","#D6604D"
 BC = ["#888","#E377C2","#FF7F0E","#9467BD","#17BECF"]
 
+def usd(x):
+    """Formatea monto en USD con el signo $ escapado para markdown de Streamlit."""
+    return f"\\${x:,.0f}"
+
 for k,v in {"tickers":[],"rf_tickers":[],"include_fico":True,"benchmarks":["^GSPC"],"views":[],"optimized":False,"result":None,
             "manual_weights":None,"returns":None,"bench_rets":None,"betas":None,"sectors":None,
             "returns_full":None,"bench_full":None,"last_period":None,"data_range":"",
@@ -410,11 +414,14 @@ with tab3:
     else:
         if AUTO:
             # Modo automático: optimiza al entrar (o al pulsar recalcular).
-            need_opt = (not st.session_state.optimized) or st.session_state.result is None
-            cbtn1, cbtn2 = st.columns([3,1])
-            if cbtn2.button("🔄 Recalcular", use_container_width=True):
-                need_opt = True
-            if need_opt:
+            # Auto-optimización: recalcula solo si cambió algún input relevante.
+            sig = (tuple(sorted(st.session_state.tickers)),
+                   tuple(sorted(st.session_state.rf_tickers)),
+                   bool(st.session_state.get("include_fico",True)),
+                   eq_t, fi_t,
+                   round(float(st.session_state.get("gk_ic",0.05)),4))
+            changed = st.session_state.get("_auto_sig") != sig
+            if changed or not st.session_state.optimized or st.session_state.result is None:
                 pb=list(st.session_state.bench_rets.values())[0]
                 with st.spinner("Generando views (Grinold-Kahn) y optimizando…"):
                     r=do_opt(st.session_state.tickers, st.session_state.rf_tickers,
@@ -423,20 +430,37 @@ with tab3:
                 for k in list(st.session_state.keys()):
                     if k.startswith("s_"): del st.session_state[k]
                 st.session_state.result=r; st.session_state.manual_weights=r.weights.copy(); st.session_state.optimized=True
+                st.session_state._auto_sig = sig
                 for x in ["mc","stress"]:
                     if x in st.session_state: del st.session_state[x]
-            cbtn1.success("✅ Views generadas automáticamente por momentum 12-1 "
-                          f"(IC={st.session_state.get('gk_ic',0.05):.2f})")
+            st.success("Las expectativas de retorno se calcularon solas con el método "
+                       "Grinold-Kahn (momentum de los últimos 12 meses). "
+                       f"Nivel de confianza del pronóstico: IC = {st.session_state.get('gk_ic',0.05):.2f}. "
+                       "Cualquier cambio en activos o perfil actualiza todo al instante.")
         else:
-            if st.button("🔄 Optimizar",type="primary",use_container_width=True):
+            # Modo manual: recalcula solo cuando cambian activos, perfil o views.
+            def _views_key(vs):
+                return tuple((v.get("type"),v.get("asset"),v.get("long"),v.get("short"),
+                             round(float(v.get("q",0)),4),round(float(v.get("confidence",0)),4)) for v in vs)
+            man_sig=(tuple(sorted(st.session_state.tickers)),
+                     tuple(sorted(st.session_state.rf_tickers)),
+                     bool(st.session_state.get("include_fico",True)),
+                     eq_t,fi_t,_views_key(st.session_state.views))
+            man_changed = st.session_state.get("_man_sig")!=man_sig
+            force = st.button("🔄 Recalcular ahora",use_container_width=True,
+                              help="Vuelve a optimizar descartando ajustes manuales de pesos.")
+            if man_changed or force or not st.session_state.optimized or st.session_state.result is None:
                 pb=list(st.session_state.bench_rets.values())[0]
-                with st.spinner("Calculando…"):
+                with st.spinner("Optimizando…"):
                     r=do_opt(st.session_state.tickers, st.session_state.rf_tickers,
                              st.session_state.get("include_fico",True),
                              st.session_state.views, eq_t, fi_t, pb)
                 for k in list(st.session_state.keys()):
                     if k.startswith("s_"): del st.session_state[k]
                 st.session_state.result=r; st.session_state.manual_weights=r.weights.copy(); st.session_state.optimized=True
+                st.session_state._man_sig=man_sig
+                for x in ["mc","stress"]:
+                    if x in st.session_state: del st.session_state[x]
 
         if st.session_state.optimized and st.session_state.result:
             res=st.session_state.result
@@ -549,17 +573,23 @@ with tab4:
         c1,c2,c3=st.columns(3)
         mh=c1.selectbox("Años",[1,2,3,5,10],index=2); mn=c2.selectbox("Precisión",[1000,5000,10000],index=1,format_func=lambda x:f"{x:,}")
         mt=c3.number_input("Meta (USD)",value=int(capital*1.2),step=10_000,format="%d")
-        if st.button("▶️ Proyectar",type="primary",use_container_width=True):
-            with st.spinner(f"Simulando…"): st.session_state["mc"]=monte_carlo(wnorm,res.bl_returns,res.cov_matrix,capital,mh,PPY,mn,mt)
+        # Proyección automática: recalcula si cambian parámetros o pesos
+        mc_sig=(round(float(wnorm.sum()),6),tuple(round(float(x),6) for x in wnorm.values),
+                int(mh),int(mn),int(mt),round(float(capital),2))
+        if st.session_state.get("_mc_sig")!=mc_sig or "mc" not in st.session_state:
+            with st.spinner("Calculando proyección…"):
+                st.session_state["mc"]=monte_carlo(wnorm,res.bl_returns,res.cov_matrix,capital,mh,PPY,mn,mt)
+            st.session_state._mc_sig=mc_sig
         if "mc" in st.session_state and st.session_state["mc"]:
             mc=st.session_state["mc"]; gain=mc.median_path[-1]-mc.capital
             c1,c2,c3=st.columns(3)
             c1.metric("💰 Proyectado",f"${mc.median_path[-1]:,.0f}",delta=f"+${gain:,.0f} ({gain/mc.capital:+.1%})")
             c2.metric("🛡️ No perder",f"{100-mc.prob_loss*100:.0f}%")
             c3.metric("🎯 Alcanzar meta",f"{mc.prob_target:.0%}",delta=f"${mc.target:,.0f}",delta_color="off")
-            st.success(f"En **{mc.horizon_years:.0f} año(s)**, tu inversión de ${mc.capital:,.0f} probablemente valdrá "
-                       f"entre **${mc.percentiles[5][-1]:,.0f}** y **${mc.percentiles[95][-1]:,.0f}**, "
-                       f"con un valor más probable de **${mc.median_path[-1]:,.0f}**.")
+            st.success(f"En **{mc.horizon_years:.0f} año(s)**, tu inversión de {usd(mc.capital)} probablemente valdrá "
+                       f"entre **{usd(mc.percentiles[5][-1])}** (si el mercado va mal) y "
+                       f"**{usd(mc.percentiles[95][-1])}** (si va bien). "
+                       f"El resultado más probable es **{usd(mc.median_path[-1])}**.")
 
             terminal = mc.terminal
             idx_best = int(np.argmax(terminal))
@@ -600,13 +630,12 @@ with tab4:
 
             # Interpretación MC
             st.info(
-                f"**¿Cómo leerlo?** De {len(terminal):,} simulaciones, el 90% terminó entre "
-                f"**${p5_val:,.0f}** y **${p95_val:,.0f}**. "
-                f"El valor más probable (mediana) es **${p50_val:,.0f}** "
-                f"({'ganancia' if p50_val>mc.capital else 'pérdida'} de "
+                f"**Cómo leer este gráfico:** simulamos {len(terminal):,} futuros posibles para tu inversión. "
+                f"En 9 de cada 10, el capital terminó entre **{usd(p5_val)}** y **{usd(p95_val)}**. "
+                f"Lo más probable es que termine en **{usd(p50_val)}** "
+                f"({'una ganancia' if p50_val>mc.capital else 'una pérdida'} de "
                 f"**{abs(p50_val/mc.capital-1):.1%}**). "
-                f"La banda más oscura (50% central) es donde se concentra la mayoría de resultados — "
-                f"si la banda es angosta, el portafolio tiene comportamiento más predecible."
+                f"Entre más angosta sea la banda oscura del centro, más predecible es el portafolio."
             )
 
             # ── GRÁFICO 2: GBM — trayectorias individuales ───────────────
@@ -645,11 +674,12 @@ with tab4:
 
             # Interpretación GBM
             st.info(
-                f"**¿Cómo leerlo?** Cada línea gris es una posible evolución semanal de tu inversión. "
-                f"La mejor trayectoria alcanzó **${gbm_max:,.0f}** y la peor cayó a **${gbm_min:,.0f}**. "
-                f"Nota que estos extremos son más amplios que las bandas P5/P95 del gráfico anterior "
-                f"(${p5_val:,.0f} – ${p95_val:,.0f}), porque aquí ves los extremos absolutos de "
-                f"{len(terminal):,} simulaciones, no solo el rango donde cae el 90%."
+                f"**Cómo leer este gráfico:** cada línea gris es un camino posible que tu inversión "
+                f"podría recorrer, semana a semana. En el mejor de todos llegó a **{usd(gbm_max)}** "
+                f"y en el peor bajó hasta **{usd(gbm_min)}**. "
+                f"Estos extremos son más amplios que el rango del gráfico anterior "
+                f"({usd(p5_val)} – {usd(p95_val)}) porque aquí ves los casos más raros de "
+                f"{len(terminal):,} simulaciones, no solo lo que pasa la mayoría de las veces."
             )
 
             # ── Métricas resumen ──
@@ -659,46 +689,64 @@ with tab4:
             sc3.metric("🚀 Si va bien (P95)",f"${p95_val:,.0f}",delta=f"{p95_val/mc.capital-1:+.1%}")
 
             # ── Explicación comparativa ──
-            with st.expander("❓ ¿Por qué los rangos del primer gráfico y del segundo son diferentes?"):
+            with st.expander("¿Por qué el primer gráfico y el segundo muestran rangos distintos?"):
                 st.markdown(
-                    f"""**Ambos gráficos usan las mismas {len(terminal):,} simulaciones.** La diferencia está en qué muestran:
+                    f"""Los dos gráficos usan exactamente las mismas {len(terminal):,} simulaciones. Lo que cambia es qué parte te muestran.
 
-**Gráfico 1 (Bandas)** → Muestra **percentiles estadísticos** (P5 a P95). Descarta el 5% de escenarios más extremos por arriba y por abajo. Es como decir: *"en 9 de cada 10 escenarios, tu inversión terminará entre ${p5_val:,.0f} y ${p95_val:,.0f}"*. Es la visión más útil para planificación.
+**El primer gráfico (bandas)** te muestra lo que pasa la mayoría de las veces. Deja fuera el 5% de casos más extremos por arriba y por abajo. En palabras simples: *en 9 de cada 10 futuros posibles, tu inversión termina entre {usd(p5_val)} y {usd(p95_val)}*. Esta es la vista que conviene usar para planificar.
 
-**Gráfico 2 (Trayectorias)** → Muestra **caminos individuales**, incluyendo el mejor y el peor absoluto de todas las simulaciones. La trayectoria peor (${gbm_min:,.0f}) y la mejor (${gbm_max:,.0f}) son outliers — eventos de probabilidad menor al 0.02% — pero existen en el universo de posibilidades.
+**El segundo gráfico (trayectorias)** te muestra todos los caminos, incluidos los más raros: el mejor de todos llegó a {usd(gbm_max)} y el peor bajó a {usd(gbm_min)}. Son casos muy poco probables (menos de 2 de cada 10,000), pero existen.
 
-**¿Cuál usar?** Las bandas del gráfico 1 son tu referencia para tomar decisiones. El gráfico 2 muestra la volatilidad real del camino: aunque termines en la mediana, el viaje puede tener subidas y bajadas fuertes. Si las trayectorias grises te parecen muy erráticas, el portafolio podría beneficiarse de más renta fija."""
+**¿En cuál fijarse?** Para tomar decisiones, usa el rango del primer gráfico. El segundo sirve para entender que el camino no es una línea recta: aunque termines cerca de lo esperado, en el trayecto puede haber subidas y bajadas fuertes. Si esos caminos grises se ven muy movidos, el portafolio podría estar más tranquilo con algo más de renta fija."""
                 )
 
         # STRESS
         st.divider()
-        st.subheader("🔥 Pruebas de estrés")
+        st.subheader("🔥 ¿Cómo resistiría tu portafolio una crisis?")
+        st.caption("Aplicamos a tu portafolio actual lo que realmente pasó en crisis históricas, "
+                   "para ver cuánto habrías perdido o ganado en cada una.")
         ret_st=st.session_state.returns_full if st.session_state.returns_full is not None else st.session_state.returns
         bench_st=st.session_state.bench_full if st.session_state.bench_full is not None else (st.session_state.bench_rets if isinstance(st.session_state.bench_rets,dict) else {})
-        if ret_st is not None: st.caption(f"📅 {ret_st.index.min().strftime('%Y-%m-%d')} → {ret_st.index.max().strftime('%Y-%m-%d')}")
-        if st.button("▶️ Correr estrés",use_container_width=True):
+        if ret_st is not None: st.caption(f"📅 Datos disponibles: {ret_st.index.min().strftime('%Y-%m-%d')} → {ret_st.index.max().strftime('%Y-%m-%d')}")
+        # Stress automático: recalcula si cambian los pesos
+        stress_sig=(round(float(wnorm.sum()),6),tuple(round(float(x),6) for x in wnorm.values),round(float(capital),2))
+        if st.session_state.get("_stress_sig")!=stress_sig or "stress" not in st.session_state:
             pb=list(bench_st.values())[0] if bench_st else None
-            with st.spinner("…"): st.session_state["stress"]=stress_test(wnorm,ret_st,CRISIS_PERIODS,capital,{FICO_TK:FICO},PPY,pb)
+            with st.spinner("Evaluando crisis históricas…"):
+                st.session_state["stress"]=stress_test(wnorm,ret_st,CRISIS_PERIODS,capital,{FICO_TK:FICO},PPY,pb)
+            st.session_state._stress_sig=stress_sig
         if "stress" in st.session_state and st.session_state["stress"]:
             stres=st.session_state["stress"]; avail=[s for s in stres if s.available]
-            if not avail: st.warning("Sin datos. Amplía la historia.")
+            if not avail: st.warning("No hay datos suficientes para evaluar crisis. Agrega más historia de datos.")
             else:
                 worst=min(avail,key=lambda s:s.port_return); beats=sum(1 for s in avail if s.port_return>s.benchmark_return)
-                st.info(f"💡 Peor: **{worst.name}** ({worst.port_return:+.2%}). Superas benchmark en **{beats}/{len(avail)}**.")
+                st.info(f"**Resumen:** de {len(avail)} crisis evaluadas, tu portafolio se comportó mejor que el "
+                        f"mercado (benchmark) en **{beats}**. La crisis que más te habría afectado es "
+                        f"**{worst.name}**, con un impacto de **{worst.port_return:+.1%}** sobre tu capital.")
+                st.caption("Barras rojas: tu portafolio. Barras grises: el mercado de referencia. "
+                           "Mientras más arriba (o menos abajo) esté la barra roja, mejor resististe.")
                 fig=go.Figure()
-                fig.add_trace(go.Bar(x=[s.name for s in avail],y=[s.port_return for s in avail],name="Portafolio",marker_color=C_OPT))
-                fig.add_trace(go.Bar(x=[s.name for s in avail],y=[s.benchmark_return for s in avail],name="Benchmark",marker_color="#888"))
+                fig.add_trace(go.Bar(x=[s.name for s in avail],y=[s.port_return for s in avail],name="Tu portafolio",marker_color=C_OPT))
+                fig.add_trace(go.Bar(x=[s.name for s in avail],y=[s.benchmark_return for s in avail],name="Mercado (benchmark)",marker_color="#888"))
                 fig.update_yaxes(tickformat=".1%"); fig.update_layout(barmode="group",height=300,margin=dict(l=0,r=0,t=5,b=0),legend=dict(orientation="h",y=1.08))
                 st.plotly_chart(fig,use_container_width=True)
+                st.markdown("##### Detalle de cada crisis")
                 for s in avail:
                     ic="🔴" if s.port_return<0 else "🟢"; diff=s.port_return-s.benchmark_return
                     cA,cB=st.columns([3,1])
                     with cA: st.markdown(f"{ic} **{s.name}** · {s.start} → {s.end}"); st.caption(s.description)
-                    with cB: st.metric("Impacto",f"{s.port_return:+.2%}",delta=f"${s.port_loss:,.0f}",delta_color="off")
-                    st.caption(f"→ {'Mejor' if diff>0 else 'Peor'} que benchmark ({diff:+.2%}). DD: {s.max_drawdown:.2%}. "
-                               + (f"Peor: {s.asset_returns.sort_values().index[0]} ({s.asset_returns.sort_values().iloc[0]:+.2%})" if not s.asset_returns.empty else ""))
+                    with cB: st.metric("Impacto en tu capital",f"{s.port_return:+.1%}",delta=usd(s.port_loss),delta_color="off")
+                    peor_activo=""
+                    if not s.asset_returns.empty:
+                        pa=s.asset_returns.sort_values()
+                        peor_activo=f" El activo que más cayó fue **{pa.index[0]}** ({pa.iloc[0]:+.1%})."
+                    comparativa=("Te fue **mejor** que el mercado" if diff>0 else "Te fue **peor** que el mercado")
+                    st.caption(f"{comparativa} por {abs(diff):.1%}. "
+                               f"Caída máxima durante el episodio: {s.max_drawdown:.1%}.{peor_activo}")
                     st.divider()
             miss=[s for s in stres if not s.available]
             if miss:
-                with st.expander(f"ℹ️ {len(miss)} crisis fuera del rango"):
-                    for s in miss: st.caption(f"**{s.name}** ({s.start}→{s.end})")
+                with st.expander(f"{len(miss)} crisis quedaron fuera del rango de datos"):
+                    st.caption("Estas crisis ocurrieron antes de que empiecen tus datos, "
+                               "así que no se pudieron evaluar:")
+                    for s in miss: st.caption(f"• **{s.name}** ({s.start} → {s.end})")
