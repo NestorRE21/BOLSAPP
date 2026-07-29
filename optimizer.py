@@ -320,76 +320,127 @@ def equilibrium_returns(cov: pd.DataFrame, w_mkt: pd.Series,
 @dataclass
 class GKConfig:
     """
-    Parámetros del generador automático de views (Grinold-Kahn).
+    Parámetros del generador automático de views (Grinold-Kahn, multi-factor).
 
     La regla del alpha (Active Portfolio Management, Ec. 10.11):
         α_i = volatilidad_i · IC · score_i
 
-    donde:
-      - volatilidad_i : volatilidad anual del activo (de la covarianza).
-      - IC            : Information Coefficient (habilidad del forecaster).
-                        0.05 = bueno, 0.10 = grande, 0.15 = clase mundial.
-      - score_i       : z-score de la señal (momentum), media 0, desv 1.
+    Modelo de DOS factores, ambos calculados solo con precios:
+      1. Momentum 12-1  : retorno de 12 meses excluyendo el mes reciente.
+      2. Low-Volatility : inverso de la volatilidad reciente (anomalía low-vol).
+
+    Los z-scores se combinan corrigiendo por su correlación transversal,
+    tal como propone Kahn: factores correlacionados no se suman a ciegas
+    (se evita contar dos veces la misma información).
+
+    IC: Information Coefficient (habilidad del forecaster).
+        0.05 = bueno, 0.10 = grande, 0.15 = clase mundial.
     """
-    ic:              float = 0.05     # habilidad asumida (conservador)
+    ic:              float = 0.05     # IC agregado del score compuesto
     lookback_months: int   = 12       # ventana del momentum
     skip_months:     int   = 1        # meses recientes a excluir (evita reversión)
+    vol_months:      int   = 6        # ventana de la volatilidad (low-vol)
+    w_momentum:      float = 0.5      # peso del factor momentum (pre-corrección)
+    w_lowvol:        float = 0.5      # peso del factor low-vol   (pre-corrección)
     confidence:      float = 0.50     # confianza asignada a cada view generada
     clip_score:      float = 3.0      # recorta z-scores extremos a ±3σ
+
+
+def _zscore(raw: pd.Series, clip: float) -> pd.Series:
+    """Estandariza una señal (media 0, desv 1) sobre activos válidos, con clip."""
+    valid = raw.dropna()
+    if len(valid) < 2 or valid.std(ddof=0) < EPS:
+        return pd.Series(0.0, index=raw.index)
+    z = (raw - valid.mean()) / valid.std(ddof=0)
+    return z.fillna(0.0).clip(-clip, clip)
 
 
 def compute_momentum_scores(returns: pd.DataFrame, assets: Sequence[str],
                             config: GKConfig,
                             periods_per_year: int = 52) -> pd.Series:
     """
-    Calcula el z-score de momentum 12-1 para cada activo.
-
-    Momentum 12-1: retorno acumulado de los últimos `lookback_months` meses
-    EXCLUYENDO los últimos `skip_months` meses. Excluir el mes más reciente
-    evita la reversión de corto plazo (toma de ganancias) documentada en la
-    literatura de momentum (Jegadeesh-Titman).
-
-    El score se estandariza (z-score) sobre TODOS los activos juntos:
-        score_i = (mom_i − media(mom)) / desv(mom)
-
-    Devuelve pd.Series de scores indexada por activo (media≈0, desv≈1).
+    Z-score de momentum 12-1: retorno acumulado de los últimos `lookback_months`
+    meses EXCLUYENDO los últimos `skip_months`. Excluir el mes reciente evita
+    la reversión de corto plazo (Jegadeesh-Titman). Score alto = subió más.
     """
     assets = list(assets)
-    # Aproximación semanas ≈ meses × (periods_per_year / 12)
     per_month = periods_per_year / 12.0
-    n_look    = int(round(config.lookback_months * per_month))
-    n_skip    = int(round(config.skip_months   * per_month))
+    n_look = int(round(config.lookback_months * per_month))
+    n_skip = int(round(config.skip_months   * per_month))
 
     momentum = {}
     for a in assets:
         if a not in returns.columns:
-            momentum[a] = 0.0
-            continue
+            momentum[a] = np.nan; continue
         s = returns[a].dropna()
         if len(s) < n_look + 1:
-            # Sin historia suficiente → momentum neutro (score 0)
-            momentum[a] = np.nan
-            continue
-        # Ventana 12-1: desde -(n_look+n_skip) hasta -n_skip
-        if n_skip > 0:
-            window = s.iloc[-(n_look + n_skip):-n_skip]
-        else:
-            window = s.iloc[-n_look:]
-        # Retorno acumulado en log-space → suma de log-retornos
-        momentum[a] = float(window.sum())
+            momentum[a] = np.nan; continue
+        window = s.iloc[-(n_look + n_skip):-n_skip] if n_skip > 0 else s.iloc[-n_look:]
+        momentum[a] = float(window.sum())          # log-ret acumulado
+    return _zscore(pd.Series(momentum, index=assets), config.clip_score)
 
-    mom = pd.Series(momentum, index=assets)
 
-    # Estandarizar sobre activos con momentum válido
-    valid = mom.dropna()
-    if len(valid) < 2 or valid.std(ddof=0) < EPS:
-        # No hay dispersión → todos los scores a 0 (sin views efectivas)
-        return pd.Series(0.0, index=assets)
+def compute_lowvol_scores(returns: pd.DataFrame, assets: Sequence[str],
+                          config: GKConfig,
+                          periods_per_year: int = 52) -> pd.Series:
+    """
+    Z-score de baja volatilidad: se estandariza la volatilidad reciente y se
+    INVIERTE el signo, de modo que menor volatilidad → score más alto.
+    Ventana: últimos `vol_months` meses. Captura la anomalía low-vol
+    (activos tranquilos tienden a mejor retorno ajustado por riesgo).
+    """
+    assets = list(assets)
+    per_month = periods_per_year / 12.0
+    n_vol = int(round(config.vol_months * per_month))
 
-    z = (mom - valid.mean()) / valid.std(ddof=0)
-    z = z.fillna(0.0)                             # activos sin historia → score 0
-    z = z.clip(-config.clip_score, config.clip_score)
-    return z
+    vols = {}
+    for a in assets:
+        if a not in returns.columns:
+            vols[a] = np.nan; continue
+        s = returns[a].dropna()
+        if len(s) < max(n_vol // 2, 4):
+            vols[a] = np.nan; continue
+        window = s.iloc[-n_vol:] if len(s) >= n_vol else s
+        vols[a] = float(window.std(ddof=1))
+    # Invertir: alta vol → z-score negativo, baja vol → z-score positivo
+    return -_zscore(pd.Series(vols, index=assets), config.clip_score)
+
+
+def combine_scores(z_mom: pd.Series, z_lv: pd.Series,
+                   config: GKConfig) -> pd.Series:
+    """
+    Combina los z-scores de momentum y low-vol corrigiendo por su correlación
+    transversal (idea de Kahn: no contar dos veces información compartida).
+
+    Con dos señales de pesos w1, w2 y correlación ρ entre ellas, el score
+    combinado se reescala por la desviación de la mezcla:
+        combo = w1·z1 + w2·z2
+        var   = w1² + w2² + 2·w1·w2·ρ
+        score = combo / sqrt(var)      → vuelve a tener desv ≈ 1
+
+    Si ρ es alta y positiva, el divisor crece y el score no se infla por
+    sumar dos señales redundantes. El resultado se re-estandariza.
+    """
+    common = z_mom.index
+    z1 = z_mom.reindex(common).fillna(0.0)
+    z2 = z_lv.reindex(common).fillna(0.0)
+    w1, w2 = config.w_momentum, config.w_lowvol
+
+    # Correlación transversal entre los dos scores (sobre activos con señal)
+    mask = (z1.abs() > EPS) | (z2.abs() > EPS)
+    if mask.sum() >= 3:
+        rho = float(np.corrcoef(z1[mask], z2[mask])[0, 1])
+        if not np.isfinite(rho):
+            rho = 0.0
+    else:
+        rho = 0.0
+
+    combo = w1 * z1 + w2 * z2
+    var   = w1**2 + w2**2 + 2 * w1 * w2 * rho
+    if var > EPS:
+        combo = combo / np.sqrt(var)
+    # Re-estandarizar para asegurar desv ≈ 1 tras la mezcla
+    return _zscore(combo, config.clip_score)
 
 
 def generate_gk_views(returns: pd.DataFrame, assets: Sequence[str],
@@ -398,24 +449,21 @@ def generate_gk_views(returns: pd.DataFrame, assets: Sequence[str],
                       periods_per_year: int = 52,
                       rf_annual: float = 0.02) -> list[View]:
     """
-    Genera views absolutas automáticas con la regla de Grinold-Kahn.
+    Genera views absolutas automáticas con la regla de Grinold-Kahn multi-factor.
 
-        α_i = σ_i · IC · score_i          (retorno residual / alpha)
-        Q_i = Π_i + α_i                   (view = equilibrio + alpha)
-
-    Cada view absoluta dice "el activo i rendirá Q_i anual", donde Q_i es el
-    retorno de equilibrio del activo más el alpha que le asigna el momentum.
-    Así el alpha inclina el portafolio hacia activos con momentum alto sin
-    ignorar el ancla de equilibrio.
+        score_i = combinación(momentum, low-vol) corregida por correlación
+        α_i     = σ_i · IC · score_i          (retorno residual / alpha)
+        Q_i     = Π_i + α_i                    (re-anclado en run_profile)
 
     Los activos forzados (FICO) NO reciben view: su retorno ya está fijado.
-
-    Devuelve lista de View(kind="absolute", ...) lista para black_litterman.
+    Devuelve lista de View(kind="absolute", ...).
     """
     forced = set(forced_tickers or [])
     assets = list(assets)
 
-    scores = compute_momentum_scores(returns, assets, config, periods_per_year)
+    z_mom = compute_momentum_scores(returns, assets, config, periods_per_year)
+    z_lv  = compute_lowvol_scores(returns, assets, config, periods_per_year)
+    scores = combine_scores(z_mom, z_lv, config)
 
     # Volatilidad anual de cada activo (raíz de la diagonal de la covarianza)
     vol = pd.Series(np.sqrt(np.clip(np.diag(cov.to_numpy()), 0, None)),
@@ -428,14 +476,11 @@ def generate_gk_views(returns: pd.DataFrame, assets: Sequence[str],
         alpha = float(vol[a] * config.ic * scores[a])
         if abs(alpha) < 1e-6:
             continue                              # sin señal → sin view
-        # View absoluta = retorno de equilibrio implícito + alpha.
-        # Como aún no tenemos Π aquí, la view se expresa como alpha sobre rf;
-        # run_profile la re-anclará sumándola al equilibrio (ver más abajo).
         views.append(View(
             kind="absolute", asset=a,
             q=alpha,                               # alpha puro (residual)
             confidence=config.confidence,
-            name=f"GK_mom_{a}",
+            name=f"GK_{a}",
         ))
     return views
 
