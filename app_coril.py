@@ -538,6 +538,7 @@ if show_tab3:
             b_np=st.session_state.betas.reindex(res.bl_returns.index).fillna(1).to_numpy()
             p_r=float(w_np@mu_np); p_v=float(np.sqrt(max(w_np@S_np@w_np,1e-10)))
             p_sh=(p_r-RF)/p_v if p_v>1e-10 else 0; p_bt=float(w_np@b_np)
+            st.markdown("##### 🎯 Métricas esperadas del portafolio")
             m1,m2,m3,m4=st.columns(4)
             m1.metric("Retorno esperado anual",f"{p_r:.2%}",
                       help="Cuánto se espera que rinda el portafolio por año, según el modelo "
@@ -552,10 +553,12 @@ if show_tab3:
                            "menor a 1 = más defensivo; mayor a 1 = más agresivo.")
 
             # Gráficos: composición por activo + por sector
+            st.markdown("##### 🥧 Composición del portafolio")
             import plotly.express as px
             g1,g2=st.columns(2)
             with g1:
                 st.caption("Por activo")
+
                 ws=wnorm[wnorm>1e-4]
                 colors=px.colors.qualitative.Set2[:len(ws)]
                 fig=go.Figure(go.Pie(labels=ws.index.tolist(),values=ws.values.tolist(),
@@ -576,6 +579,7 @@ if show_tab3:
                     st.plotly_chart(fig,use_container_width=True)
 
             # Evolución histórica — filtrada por chart_years, siempre desde capital inicial
+            st.markdown("##### 📈 Evolución histórica del capital")
             pr_full,wl_full,dd_full,bw_full,bdd_full=wdd(wnorm,st.session_state.returns,st.session_state.bench_rets,capital)
 
             # Filtrar al rango visual seleccionado
@@ -640,6 +644,80 @@ if show_tab3:
                       help="Conditional VaR o Expected Shortfall. Cuando las cosas van realmente mal "
                            "(ese peor 5%), esta es la pérdida promedio. Siempre es peor que el VaR "
                            "porque mira el promedio de la cola, no solo el umbral.")
+
+            # ── COMPARATIVA vs BENCHMARK(S) ────────────────────────────────
+            st.divider()
+            st.markdown("##### ⚖️ Tu portafolio frente a los benchmarks")
+            st.caption("Comparación de las métricas clave contra los índices de referencia elegidos, "
+                       "sobre el mismo período. Se actualiza sola al agregar o quitar benchmarks "
+                       "en la pestaña Activos.")
+
+            def _metrics_from_rets(r):
+                """Retorno anual, vol anual, Sharpe y drawdown máx de una serie de log-retornos."""
+                r = r.dropna()
+                if len(r) < 2:
+                    return None
+                ar = np.exp(r.mean()*PPY)-1
+                av = r.std(ddof=1)*np.sqrt(PPY)
+                sh = (ar-RF)/av if av>1e-10 else float("nan")
+                wl_ = np.exp(r.cumsum())
+                mdd = float((wl_/wl_.cummax()-1).min())
+                return {"ret":ar,"vol":av,"sharpe":sh,"dd":mdd}
+
+            # Portafolio (rango visible)
+            rows = []
+            pm = _metrics_from_rets(pr)
+            rows.append(("📊 Tu portafolio", pm, True))
+            # Cada benchmark sobre el mismo rango de fechas
+            for n in st.session_state.bench_rets:
+                br = st.session_state.bench_rets[n].reindex(pr.index).dropna()
+                bm = _metrics_from_rets(br)
+                if bm is not None:
+                    rows.append((n, bm, False))
+
+            if len(rows) > 1:
+                # Tabla comparativa
+                comp = pd.DataFrame(
+                    {"Retorno anual":[f"{r['ret']:.2%}" for _,r,_ in rows],
+                     "Volatilidad":[f"{r['vol']:.2%}" for _,r,_ in rows],
+                     "Sharpe":[f"{r['sharpe']:.2f}" for _,r,_ in rows],
+                     "Caída máx":[f"{r['dd']:.2%}" for _,r,_ in rows]},
+                    index=[nm for nm,_,_ in rows])
+                st.dataframe(comp, use_container_width=True)
+
+                # Gráfico de barras agrupadas: retorno y volatilidad
+                cbar1, cbar2 = st.columns(2)
+                names = [nm for nm,_,_ in rows]
+                bar_colors = [C_RV] + [BC[i%len(BC)] for i in range(len(rows)-1)]
+                with cbar1:
+                    st.caption("Retorno anual")
+                    fr = go.Figure(go.Bar(x=names, y=[r['ret'] for _,r,_ in rows],
+                        marker_color=bar_colors, text=[f"{r['ret']:.1%}" for _,r,_ in rows],
+                        textposition="outside"))
+                    fr.update_yaxes(tickformat=".0%"); fr.update_layout(height=260,margin=dict(l=0,r=0,t=5,b=0))
+                    st.plotly_chart(fr,use_container_width=True)
+                with cbar2:
+                    st.caption("Sharpe (retorno ajustado por riesgo)")
+                    fs = go.Figure(go.Bar(x=names, y=[r['sharpe'] for _,r,_ in rows],
+                        marker_color=bar_colors, text=[f"{r['sharpe']:.2f}" for _,r,_ in rows],
+                        textposition="outside"))
+                    fs.update_layout(height=260,margin=dict(l=0,r=0,t=5,b=0))
+                    st.plotly_chart(fs,use_container_width=True)
+
+                # Lectura automática
+                best_sh = max(rows, key=lambda x: (x[1]['sharpe'] if np.isfinite(x[1]['sharpe']) else -99))
+                port_sh = rows[0][1]['sharpe']
+                if best_sh[2]:
+                    st.success("Tu portafolio tiene el **mejor retorno ajustado por riesgo (Sharpe)** "
+                               "de la comparación. Eso significa que estás obteniendo más rendimiento "
+                               "por cada unidad de riesgo que los índices de referencia.")
+                else:
+                    st.info(f"El benchmark **{best_sh[0]}** tiene mejor Sharpe ({best_sh[1]['sharpe']:.2f}) "
+                            f"que tu portafolio ({port_sh:.2f}) en este período. Esto puede deberse a que "
+                            f"tu portafolio prioriza otros objetivos (menor caída, perfil de riesgo, "
+                            f"diversificación), no solo el retorno ajustado por riesgo.")
+            else:
+                st.caption("Agrega uno o más benchmarks en la pestaña **Activos** para ver la comparación.")
 
         # Navegación al final del portafolio
         if st.session_state.optimized and st.session_state.result:
