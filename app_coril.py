@@ -548,7 +548,17 @@ if show_tab3:
             p_r=float(w_np@mu_np); p_v=float(np.sqrt(max(w_np@S_np@w_np,1e-10)))
             p_sh=(p_r-RF)/p_v if p_v>1e-10 else 0; p_bt=float(w_np@b_np)
             m1,m2,m3,m4=st.columns(4)
-            m1.metric("Retorno",f"{p_r:.2%}"); m2.metric("Riesgo",f"{p_v:.2%}"); m3.metric("Sharpe",f"{p_sh:.2f}"); m4.metric("Beta",f"{p_bt:.2f}")
+            m1.metric("Retorno esperado anual",f"{p_r:.2%}",
+                      help="Cuánto se espera que rinda el portafolio por año, según el modelo "
+                           "Black-Litterman. Es una expectativa a futuro, no una garantía.")
+            m2.metric("Riesgo (volatilidad anual)",f"{p_v:.2%}",
+                      help="Qué tanto puede moverse el portafolio en un año. Más alto = más incertidumbre.")
+            m3.metric("Sharpe",f"{p_sh:.2f}",
+                      help="Retorno por unidad de riesgo. Mide cuánto rendimiento extra obtienes por "
+                           "cada punto de riesgo que asumes. Más alto es mejor; arriba de 1 se considera bueno.")
+            m4.metric("Beta",f"{p_bt:.2f}",
+                      help="Sensibilidad al mercado. Beta 1 = se mueve igual que el mercado; "
+                           "menor a 1 = más defensivo; mayor a 1 = más agresivo.")
 
             # Gráficos: composición por activo + por sector
             import plotly.express as px
@@ -618,7 +628,27 @@ if show_tab3:
             from scipy.stats import norm as _norm
             mu_h=pr.mean()*PPY; sig_h=ann_v; z=_norm.ppf(0.05)
             var95=-(mu_h+z*sig_h); cvar95=-(mu_h-sig_h*_norm.pdf(z)/0.05)
-            st.caption(f"**Histórico:** Ret {ann_r:.2%} · Vol {ann_v:.2%} · DD máx {dd.min():.2%} · VaR 95% {var95:.2%} · CVaR 95% {cvar95:.2%}")
+            st.markdown("##### 📅 Comportamiento histórico del portafolio")
+            st.caption("Estos números resumen cómo se habría comportado esta combinación de activos "
+                       "en el pasado, según los datos descargados.")
+            h1,h2,h3=st.columns(3)
+            h1.metric("Retorno histórico anual",f"{ann_r:.2%}",
+                      help="Cuánto habría rendido el portafolio en promedio por año, según su historia. "
+                           "No es una promesa a futuro, es lo que ocurrió en el pasado.")
+            h2.metric("Volatilidad anual",f"{ann_v:.2%}",
+                      help="Qué tanto sube y baja el portafolio. Más alta = más movimiento y más riesgo. "
+                           "Es la desviación estándar de los retornos, anualizada.")
+            h3.metric("Caída máxima (drawdown)",f"{dd.min():.2%}",
+                      help="La peor caída desde un punto alto hasta el punto más bajo que sufrió el "
+                           "portafolio en el período. Mide el peor mal momento que habrías vivido.")
+            h4,h5=st.columns(2)
+            h4.metric("VaR 95% (pérdida esperada)",f"{var95:.2%}",
+                      help="Value at Risk. En el 5% de los peores años, esperarías perder al menos "
+                           "este porcentaje. Es el umbral de pérdida en un mal escenario.")
+            h5.metric("CVaR 95% (pérdida extrema)",f"{cvar95:.2%}",
+                      help="Conditional VaR o Expected Shortfall. Cuando las cosas van realmente mal "
+                           "(ese peor 5%), esta es la pérdida promedio. Siempre es peor que el VaR "
+                           "porque mira el promedio de la cola, no solo el umbral.")
 
         # Navegación al final del portafolio
         if st.session_state.optimized and st.session_state.result:
@@ -637,8 +667,12 @@ if show_tab4:
         # MONTE CARLO
         st.subheader("🎲 ¿Cuánto podría valer tu portafolio?")
         c1,c2,c3=st.columns(3)
-        mh=c1.selectbox("Años",[1,2,3,5,10],index=2); mn=c2.selectbox("Precisión",[1000,5000,10000],index=1,format_func=lambda x:f"{x:,}")
-        mt=c3.number_input("Meta (USD)",value=int(capital*1.2),step=10_000,format="%d")
+        mh=c1.selectbox("Años a proyectar",[1,2,3,5,10],index=2,
+                        help="Horizonte de la proyección. En cuántos años quieres ver cómo evoluciona tu inversión.")
+        mn=c2.selectbox("Precisión",[1000,5000,10000],index=1,format_func=lambda x:f"{x:,}",
+                        help="Cuántos futuros posibles simular. Más simulaciones = resultado más estable, pero más lento.")
+        mt=c3.number_input("Meta (USD)",value=int(capital*1.2),step=10_000,format="%d",
+                           help="El capital que te gustaría alcanzar. Se calcula la probabilidad de llegar a esta meta.")
         # Proyección automática: recalcula si cambian parámetros o pesos
         mc_sig=(round(float(wnorm.sum()),6),tuple(round(float(x),6) for x in wnorm.values),
                 int(mh),int(mn),int(mt),round(float(capital),2))
@@ -649,9 +683,12 @@ if show_tab4:
         if "mc" in st.session_state and st.session_state["mc"]:
             mc=st.session_state["mc"]; gain=mc.median_path[-1]-mc.capital
             c1,c2,c3=st.columns(3)
-            c1.metric("💰 Proyectado",f"${mc.median_path[-1]:,.0f}",delta=f"+${gain:,.0f} ({gain/mc.capital:+.1%})")
-            c2.metric("🛡️ No perder",f"{100-mc.prob_loss*100:.0f}%")
-            c3.metric("🎯 Alcanzar meta",f"{mc.prob_target:.0%}",delta=f"${mc.target:,.0f}",delta_color="off")
+            c1.metric(f"💰 Valor proyectado a {mh} año(s)",f"${mc.median_path[-1]:,.0f}",delta=f"+${gain:,.0f} ({gain/mc.capital:+.1%})",
+                      help="El valor más probable (mediana) de tu inversión al final del horizonte elegido.")
+            c2.metric("🛡️ Probabilidad de no perder",f"{100-mc.prob_loss*100:.0f}%",
+                      help="En qué porcentaje de los futuros simulados terminas con más dinero del que invertiste.")
+            c3.metric("🎯 Probabilidad de alcanzar la meta",f"{mc.prob_target:.0%}",delta=f"${mc.target:,.0f}",delta_color="off",
+                      help="En qué porcentaje de los futuros simulados alcanzas o superas tu meta.")
             st.success(f"En **{mc.horizon_years:.0f} año(s)**, tu inversión de {usd(mc.capital)} probablemente valdrá "
                        f"entre **{usd(mc.percentiles[5][-1])}** (si el mercado va mal) y "
                        f"**{usd(mc.percentiles[95][-1])}** (si va bien). "
@@ -748,11 +785,38 @@ if show_tab4:
                 f"{len(terminal):,} simulaciones, no solo lo que pasa la mayoría de las veces."
             )
 
+            with st.expander("🔬 ¿Qué es el Movimiento Browniano Geométrico y de dónde sale?"):
+                st.markdown(
+                    """El **Movimiento Browniano Geométrico (GBM)** es el modelo matemático estándar
+para simular cómo evoluciona el precio de un activo en el tiempo. La idea: cada período, el
+capital se multiplica por un factor de crecimiento aleatorio, de modo que nunca puede volverse
+negativo (algo esencial, porque una inversión no puede valer menos de cero).
+
+La fórmula que usa el sistema es:
+
+`capital_final = capital_inicial × e^(suma de retornos aleatorios)`
+
+Los retornos aleatorios de cada semana se sacan de una distribución normal multivariada
+construida con el retorno esperado (μ) y la matriz de covarianza (Σ) del modelo Black-Litterman.
+Al acumularlos y aplicarles la exponencial, se obtiene cada una de las líneas grises del gráfico.
+
+**Importante:** los dos gráficos de esta sección (las bandas y las trayectorias) beben de las
+**mismas** simulaciones GBM. No son dos modelos distintos — son dos formas de mirar el mismo
+conjunto de futuros posibles."""
+                )
+
             # ── Métricas resumen ──
+            st.markdown(f"##### Rango de valor proyectado a {mh} año(s)")
             sc1,sc2,sc3=st.columns(3)
-            sc1.metric("😟 Si va mal (P5)",f"${p5_val:,.0f}",delta=f"{p5_val/mc.capital-1:+.1%}")
-            sc2.metric("📊 Más probable (P50)",f"${p50_val:,.0f}",delta=f"{p50_val/mc.capital-1:+.1%}")
-            sc3.metric("🚀 Si va bien (P95)",f"${p95_val:,.0f}",delta=f"{p95_val/mc.capital-1:+.1%}")
+            sc1.metric("😟 Escenario malo (P5)",f"${p5_val:,.0f}",delta=f"{p5_val/mc.capital-1:+.1%}",
+                       help="Percentil 5: solo el 5% de los futuros simulados terminó peor que esto. "
+                            "Es tu escenario pesimista razonable.")
+            sc2.metric("📊 Escenario más probable (P50)",f"${p50_val:,.0f}",delta=f"{p50_val/mc.capital-1:+.1%}",
+                       help="Mediana: la mitad de los futuros terminó por encima y la mitad por debajo. "
+                            "El resultado central esperado.")
+            sc3.metric("🚀 Escenario bueno (P95)",f"${p95_val:,.0f}",delta=f"{p95_val/mc.capital-1:+.1%}",
+                       help="Percentil 95: solo el 5% de los futuros simulados terminó mejor que esto. "
+                            "Es tu escenario optimista razonable.")
 
             # ── Explicación comparativa ──
             with st.expander("¿Por qué el primer gráfico y el segundo muestran rangos distintos?"):
