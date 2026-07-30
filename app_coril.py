@@ -252,13 +252,6 @@ with st.sidebar:
         st.caption(f"Modo: **{_mode_label}**")
         if st.button("↔️ Cambiar modo", use_container_width=True):
             st.session_state.mode=None; st.rerun()
-        if st.session_state.mode=="auto":
-            st.session_state.gk_ic = st.select_slider(
-                "IC (habilidad del forecaster)",
-                options=[0.02,0.05,0.10,0.15],
-                value=st.session_state.get("gk_ic",0.05),
-                help="Grinold-Kahn: 0.05 bueno · 0.10 grande · 0.15 clase mundial. "
-                     "Mayor IC = views más agresivas.")
         st.divider()
     ps=st.selectbox("Perfil",list(PERFILES.keys()),index=2); eq_t,fi_t=PERFILES[ps]
     st.caption(P_DESC[ps])
@@ -491,11 +484,9 @@ if show_tab3:
                 st.session_state._auto_sig = sig
                 for x in ["mc","stress"]:
                     if x in st.session_state: del st.session_state[x]
-            st.success("Las expectativas de retorno se calcularon solas con el método "
-                       "Grinold-Kahn, combinando dos señales: el momentum de los últimos "
-                       "12 meses y la baja volatilidad de cada activo. "
-                       f"Nivel de confianza del pronóstico: IC = {st.session_state.get('gk_ic',0.05):.2f}. "
-                       "Cualquier cambio en activos o perfil actualiza todo al instante.")
+            st.success("Las expectativas de retorno se calcularon automáticamente combinando "
+                       "dos señales: el momentum de los últimos 12 meses y la baja volatilidad "
+                       "de cada activo. Cualquier cambio en activos o perfil actualiza todo al instante.")
         else:
             # Modo manual: recalcula solo cuando cambian activos, perfil o views.
             def _views_key(vs):
