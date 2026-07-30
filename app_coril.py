@@ -25,7 +25,7 @@ def usd(x):
 for k,v in {"tickers":[],"rf_tickers":[],"include_fico":True,"benchmarks":["^GSPC"],"views":[],"optimized":False,"result":None,
             "manual_weights":None,"returns":None,"bench_rets":None,"betas":None,"sectors":None,
             "returns_full":None,"bench_full":None,"last_period":None,"data_range":"",
-            "mode":None,"gk_ic":0.05}.items():
+            "mode":None,"gk_ic":0.05,"step":0}.items():
     st.session_state.setdefault(k,v)
 
 # ═══════════════════ BACKEND ══════════════════════════════════════════════════
@@ -312,14 +312,48 @@ if st.session_state.tickers and st.session_state.benchmarks and st.session_state
 
 # ═══════════════════ MAIN ═════════════════════════════════════════════════════
 st.title("Optimizador de portafolios")
+
+# Navegación tipo "pasos" (permite botones Siguiente/Atrás)
 if AUTO:
-    tab1,tab3,tab4=st.tabs(["1 · Activos","2 · Portafolio","3 · Proyecciones"])
-    tab2=None  # sin pestaña de expectativas en modo automático
+    STEPS = ["1 · Activos","2 · Portafolio","3 · Proyecciones"]
 else:
-    tab1,tab2,tab3,tab4=st.tabs(["1 · Activos","2 · Expectativas","3 · Portafolio","4 · Proyecciones"])
+    STEPS = ["1 · Activos","2 · Expectativas","3 · Portafolio","4 · Proyecciones"]
+
+# Clamp del paso actual al rango válido
+st.session_state.step = max(0, min(st.session_state.step, len(STEPS)-1))
+
+# Barra de navegación superior (clicable)
+nav_cols = st.columns(len(STEPS))
+for i,label in enumerate(STEPS):
+    with nav_cols[i]:
+        is_current = (i == st.session_state.step)
+        if st.button(label, key=f"nav_{i}", use_container_width=True,
+                     type="primary" if is_current else "secondary"):
+            st.session_state.step = i; st.rerun()
+st.divider()
+
+# Helpers de tab: cada bloque se ejecuta solo si es el paso activo.
+# (Se usan flags en vez de st.tabs para poder navegar con botones.)
+_step = st.session_state.step
+if AUTO:
+    show_tab1 = (_step==0); show_tab2=False; show_tab3=(_step==1); show_tab4=(_step==2)
+else:
+    show_tab1 = (_step==0); show_tab2=(_step==1); show_tab3=(_step==2); show_tab4=(_step==3)
+
+def nav_buttons(back_to=None, next_to=None, next_label="Siguiente →", back_label="← Atrás"):
+    """Dibuja botones de navegación Atrás / Siguiente."""
+    c1,_,c3 = st.columns([1,3,1])
+    if back_to is not None:
+        with c1:
+            if st.button(back_label, use_container_width=True, key=f"back_{back_to}"):
+                st.session_state.step = back_to; st.rerun()
+    if next_to is not None and next_label:
+        with c3:
+            if st.button(next_label, use_container_width=True, type="primary", key=f"next_{next_to}"):
+                st.session_state.step = next_to; st.rerun()
 
 # ═══════════════════ TAB 1 ════════════════════════════════════════════════════
-with tab1:
+if show_tab1:
     col_s,col_t=st.columns([4,1])
     with col_t: add_to=st.radio("Añadir como",["🔵 Renta variable","🟢 Renta fija","📊 Benchmark"])
     with col_s: q=st.text_input("🔍 Buscar",placeholder="Apple, TLT, SHY, AGG, ^GSPC…")
@@ -380,10 +414,18 @@ with tab1:
         with st.spinner("Descargando…"):
             if run_dl(OPT_PERIOD): st.success(f"✅ {st.session_state.data_range}")
             else: st.error("Error. Verifica tickers.")
+    if not can_dl:
+        st.caption("💡 Para continuar necesitas: al menos un activo de renta variable, "
+                   "uno de renta fija (o FICO activado) y un benchmark.")
+    # Botón para avanzar cuando ya hay datos
+    if st.session_state.returns is not None:
+        st.divider()
+        _next_label = "Continuar a Portafolio →" if AUTO else "Continuar a Expectativas →"
+        nav_buttons(next_to=1, next_label=_next_label)
 
 # ═══════════════════ TAB 2 (solo modo Manual) ═════════════════════════════════
-if tab2 is not None:
-    with tab2:
+if show_tab2:
+    if True:
         if st.session_state.returns is None: st.info("⬅️ Descarga datos primero.")
         else:
             st.caption("Opcional: añade tus expectativas sobre algún activo.")
@@ -407,10 +449,22 @@ if tab2 is not None:
                 else:
                     c1.caption(f"📌 {v['long']} > {v['short']} por {v['q']:.0%} (conf. {v['confidence']:.0%})")
                 if c2.button("✕",key=f"rv{i}"): st.session_state.views.pop(i)
+            st.divider()
+            st.caption("Las views son opcionales. Puedes continuar sin agregar ninguna.")
+            nav_buttons(back_to=0, next_to=2, next_label="Ver Portafolio →")
 
 # ═══════════════════ TAB 3 ════════════════════════════════════════════════════
-with tab3:
-    if st.session_state.returns is None: st.info("⬅️ Descarga datos primero.")
+if show_tab3:
+    # Validación previa: necesitamos datos y al menos un activo de RV con historia.
+    _eq_validos = [a for a in st.session_state.tickers
+                   if st.session_state.returns is not None and a in st.session_state.returns.columns] \
+                  if st.session_state.returns is not None else []
+    if st.session_state.returns is None:
+        st.info("⬅️ Primero agrega activos y descarga los datos en la pestaña **Activos**.")
+    elif not _eq_validos:
+        st.warning("⚠️ Necesitas al menos un activo de **renta variable** (acción o ETF de equity) "
+                   "con datos descargados. Ve a la pestaña **Activos**, agrégalo y espera a que "
+                   "cargue el histórico.")
     else:
         if AUTO:
             # Modo automático: optimiza al entrar (o al pulsar recalcular).
@@ -424,9 +478,13 @@ with tab3:
             if changed or not st.session_state.optimized or st.session_state.result is None:
                 pb=list(st.session_state.bench_rets.values())[0]
                 with st.spinner("Generando views (Grinold-Kahn) y optimizando…"):
-                    r=do_opt(st.session_state.tickers, st.session_state.rf_tickers,
-                             st.session_state.get("include_fico",True),
-                             st.session_state.views, eq_t, fi_t, pb, auto=True)
+                    try:
+                        r=do_opt(st.session_state.tickers, st.session_state.rf_tickers,
+                                 st.session_state.get("include_fico",True),
+                                 st.session_state.views, eq_t, fi_t, pb, auto=True)
+                    except ValueError as e:
+                        st.error(f"No se pudo optimizar: {e}")
+                        st.stop()
                 for k in list(st.session_state.keys()):
                     if k.startswith("s_"): del st.session_state[k]
                 st.session_state.result=r; st.session_state.manual_weights=r.weights.copy(); st.session_state.optimized=True
@@ -562,8 +620,15 @@ with tab3:
             var95=-(mu_h+z*sig_h); cvar95=-(mu_h-sig_h*_norm.pdf(z)/0.05)
             st.caption(f"**Histórico:** Ret {ann_r:.2%} · Vol {ann_v:.2%} · DD máx {dd.min():.2%} · VaR 95% {var95:.2%} · CVaR 95% {cvar95:.2%}")
 
+        # Navegación al final del portafolio
+        if st.session_state.optimized and st.session_state.result:
+            st.divider()
+            _proj_step = 2 if AUTO else 3
+            _back_step = 0 if AUTO else 1
+            nav_buttons(back_to=_back_step, next_to=_proj_step, next_label="Ver Proyecciones →")
+
 # ═══════════════════ TAB 4 ════════════════════════════════════════════════════
-with tab4:
+if show_tab4:
     if not(st.session_state.optimized and st.session_state.result): st.info("⬅️ Optimiza primero.")
     else:
         res=st.session_state.result
@@ -751,3 +816,8 @@ with tab4:
                     st.caption("Estas crisis ocurrieron antes de que empiecen tus datos, "
                                "así que no se pudieron evaluar:")
                     for s in miss: st.caption(f"• **{s.name}** ({s.start} → {s.end})")
+
+        # Navegación: volver al portafolio
+        st.divider()
+        _port_step = 1 if AUTO else 2
+        nav_buttons(back_to=_port_step, next_label="", back_label="← Volver a Portafolio")
