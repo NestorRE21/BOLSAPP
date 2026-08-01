@@ -19,6 +19,16 @@ PERFILES = {"Conservador (30/70)":(0.30,0.70),"Moderado-bajo (40/60)":(0.40,0.60
             "Moderado (50/50)":(0.50,0.50),"Crecimiento (60/40)":(0.60,0.40),"Agresivo (70/30)":(0.70,0.30)}
 P_DESC = {"Conservador (30/70)":"Preservar capital.","Moderado-bajo (40/60)":"Leve crecimiento.",
           "Moderado (50/50)":"Balance.","Crecimiento (60/40)":"Mayor exposición.","Agresivo (70/30)":"Máxima RV."}
+
+def detectar_perfil(rv_pct):
+    """Detecta el nombre del perfil según el % de renta variable (0-100)."""
+    if rv_pct <= 20:   return "Muy conservador", "Máxima preservación de capital."
+    if rv_pct <= 35:   return "Conservador", "Preservar capital."
+    if rv_pct <= 45:   return "Moderado-bajo", "Leve crecimiento."
+    if rv_pct <= 55:   return "Moderado", "Balance entre riesgo y retorno."
+    if rv_pct <= 65:   return "Crecimiento", "Mayor exposición a renta variable."
+    if rv_pct <= 80:   return "Agresivo", "Alta exposición a renta variable."
+    return "Muy agresivo", "Máxima exposición a renta variable."
 EJ = ["AAPL","MSFT","NVDA","JNJ","KO","QQQ"]
 C_RV,C_RF,C_OPT = "#2E5E8C","#2CA02C","#D6604D"
 BC = ["#888","#E377C2","#FF7F0E","#9467BD","#17BECF"]
@@ -234,9 +244,9 @@ def wdd(w,rets,bd,cap):
 def run_dl(period):
     tks=st.session_state.tickers; bks=st.session_state.benchmarks
     rf_tks=st.session_state.rf_tickers
-    if not tks or not bks: return False
-    # Descargar equity + RF de mercado juntos
+    # Se necesita al menos un activo (RV o RF de mercado) y un benchmark.
     all_market = list(set(tks + rf_tks))  # sin duplicados
+    if not all_market or not bks: return False
     lr=dl_eq(tuple(all_market),period)
     if lr is None or lr.empty: return False
     bd=dl_bk(tuple(bks),period)
@@ -266,9 +276,19 @@ with st.sidebar:
         if st.button("↔️ Cambiar modo", use_container_width=True):
             st.session_state.mode=None; st.rerun()
         st.divider()
-    ps=st.selectbox("Perfil",list(PERFILES.keys()),index=2); eq_t,fi_t=PERFILES[ps]
-    st.caption(P_DESC[ps])
-    c1,c2=st.columns(2); c1.metric("RV",f"{eq_t:.0%}"); c2.metric("RF",f"{fi_t:.0%}")
+    # Perfil por porcentajes editables (se detecta el nombre automáticamente)
+    st.markdown("**Perfil de riesgo**")
+    st.caption("Ajusta los porcentajes de renta variable y renta fija. "
+               "El perfil se detecta automáticamente.")
+    pc1,pc2=st.columns(2)
+    rv_pct=pc1.number_input("Renta variable (%)",0,100,
+                            int(st.session_state.get("_rv_pct",50)),5,key="rv_pct_input")
+    rf_pct=100-rv_pct
+    pc2.metric("Renta fija (%)",f"{rf_pct}%")
+    st.session_state._rv_pct=rv_pct
+    eq_t,fi_t=rv_pct/100.0, rf_pct/100.0
+    _perfil_nombre,_perfil_desc=detectar_perfil(rv_pct)
+    st.info(f"**Perfil detectado: {_perfil_nombre}** ({rv_pct}/{rf_pct}) · {_perfil_desc}")
     st.divider()
     capital=st.slider("Inversión (USD)",1_000,1_000_000,100_000,1_000,format="$%d")
     chart_years=st.selectbox("Ver gráfico desde hace",["1y","2y","3y","5y","10y","15y"],index=3,
@@ -413,22 +433,29 @@ if show_tab1:
             c1,c2=st.columns([5,1]); c1.write(b)
             if c2.button("✕",key=f"rb{i}"): st.session_state.benchmarks.pop(i)
 
-    # ── Descarga ─────────────────────────────────────────────────────────
+    # ── Continuar (descarga automática) ──────────────────────────────────
     has_rf = bool(st.session_state.rf_tickers) or st.session_state.get("include_fico", True)
-    can_dl = bool(st.session_state.tickers and st.session_state.benchmarks and has_rf)
-    if st.session_state.data_range: st.success(f"📦 {st.session_state.data_range} ({st.session_state.last_period})")
-    if st.button("📥 Descargar datos",type="primary",use_container_width=True, disabled=not can_dl):
-        with st.spinner("Descargando…"):
-            if run_dl(OPT_PERIOD): st.success(f"✅ {st.session_state.data_range}")
-            else: st.error("Error. Verifica tickers.")
-    if not can_dl:
-        st.caption("💡 Para continuar necesitas: al menos un activo de renta variable, "
-                   "uno de renta fija (o FICO activado) y un benchmark.")
-    # Botón para avanzar cuando ya hay datos
-    if st.session_state.returns is not None:
-        st.divider()
-        _next_label = "Continuar a Portafolio →" if AUTO else "Continuar a Expectativas →"
-        nav_buttons(next_to=1, next_label=_next_label)
+    has_any_asset = bool(st.session_state.tickers) or has_rf
+    can_continue = bool(has_any_asset and st.session_state.benchmarks)
+    if st.session_state.data_range:
+        st.success(f"📦 Datos cargados: {st.session_state.data_range}")
+
+    st.divider()
+    if not can_continue:
+        st.caption("💡 Para continuar necesitas al menos un activo (renta variable o renta fija) "
+                   "y un benchmark de referencia.")
+    _next_label = "Continuar a Portafolio →" if AUTO else "Continuar a Expectativas →"
+    cc_l,_,cc_r=st.columns([1,3,1])
+    with cc_r:
+        if st.button(_next_label, use_container_width=True, type="primary",
+                     disabled=not can_continue, key="continue_dl"):
+            # Descarga automática de datos si hace falta, luego avanza
+            with st.spinner("Descargando datos y preparando el análisis…"):
+                ok = run_dl(OPT_PERIOD)
+            if ok:
+                st.session_state.step = 1; st.rerun()
+            else:
+                st.error("No se pudieron descargar los datos. Verifica los tickers ingresados.")
 
 # ═══════════════════ TAB 2 (solo modo Manual) ═════════════════════════════════
 if show_tab2:
@@ -462,16 +489,26 @@ if show_tab2:
 
 # ═══════════════════ TAB 3 ════════════════════════════════════════════════════
 if show_tab3:
-    # Validación previa: necesitamos datos y al menos un activo de RV con historia.
+    # Validación previa coherente con el perfil elegido.
     _eq_validos = [a for a in st.session_state.tickers
                    if st.session_state.returns is not None and a in st.session_state.returns.columns] \
                   if st.session_state.returns is not None else []
+    _rf_validos = [a for a in st.session_state.rf_tickers
+                   if st.session_state.returns is not None and a in st.session_state.returns.columns] \
+                  if st.session_state.returns is not None else []
+    _hay_rf = bool(_rf_validos) or st.session_state.get("include_fico",True)
+    _needs_rv = eq_t > 1e-6
+    _needs_rf = fi_t > 1e-6
     if st.session_state.returns is None:
-        st.info("⬅️ Primero agrega activos y descarga los datos en la pestaña **Activos**.")
-    elif not _eq_validos:
-        st.warning("⚠️ Necesitas al menos un activo de **renta variable** (acción o ETF de equity) "
-                   "con datos descargados. Ve a la pestaña **Activos**, agrégalo y espera a que "
-                   "cargue el histórico.")
+        st.info("⬅️ Primero agrega activos en la pestaña **Activos** y pulsa Continuar.")
+    elif _needs_rv and not _eq_validos:
+        st.warning(f"⚠️ Tu perfil tiene **{eq_t:.0%}** en renta variable, pero no agregaste ningún "
+                   "activo de renta variable. Agrega al menos uno en la pestaña **Activos**, "
+                   "o baja el porcentaje de renta variable a 0% para un portafolio solo de renta fija.")
+    elif _needs_rf and not _hay_rf:
+        st.warning(f"⚠️ Tu perfil tiene **{fi_t:.0%}** en renta fija, pero no agregaste ningún activo "
+                   "de renta fija ni activaste el Fondo de inversión. Agrega uno en la pestaña "
+                   "**Activos**, o sube la renta variable a 100% para un portafolio solo de renta variable.")
     else:
         if AUTO:
             # Modo automático: optimiza al entrar (o al pulsar recalcular).
