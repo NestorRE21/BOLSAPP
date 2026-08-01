@@ -291,8 +291,6 @@ with st.sidebar:
     st.info(f"**Perfil detectado: {_perfil_nombre}** ({rv_pct}/{rf_pct}) · {_perfil_desc}")
     st.divider()
     capital=st.slider("Inversión (USD)",1_000,1_000_000,100_000,1_000,format="$%d")
-    chart_years=st.selectbox("Ver gráfico desde hace",["1y","2y","3y","5y","10y","15y"],index=3,
-                             help="Solo afecta la vista del gráfico histórico. La optimización siempre usa 15 años.")
     with st.expander("⚙️ Avanzado"):
         _p=RiskProfile.for_split(eq_t,fi_t)
         st.caption(f"RF: {FICO_DISPLAY} · {FICO.ret_annual:.2%} | Beta: {_p.beta_min:.2f}–{_p.beta_max:.2f} | DD máx: {_p.max_drawdown:.0%}")
@@ -615,22 +613,37 @@ if show_tab3:
                 fig=go.Figure(go.Pie(labels=[disp(a) for a in ws.index.tolist()],values=ws.values.tolist(),
                     marker_colors=colors,hole=.4,textinfo="label+percent"))
                 fig.update_layout(height=280,margin=dict(l=0,r=0,t=5,b=0),showlegend=False)
-                st.plotly_chart(fig,use_container_width=True)
+                st.plotly_chart(fig,use_container_width=True,key="chart_pie_activo")
             with g2:
                 st.caption("Por sector")
                 sec=st.session_state.sectors
-                if sec is not None and not sec.empty:
-                    sw={}
-                    for a in wnorm.index:
-                        if wnorm[a]>1e-4: s=sec.get(a,"–"); sw[s]=sw.get(s,0)+wnorm[a]
+                sw={}
+                for a in wnorm.index:
+                    if wnorm[a]>1e-4:
+                        # Sector con fallbacks útiles según el tipo de activo
+                        if a==FICO_TK:
+                            s="Fondo de inversión"
+                        elif a in st.session_state.rf_tickers:
+                            s="Renta fija"
+                        else:
+                            s=(sec.get(a) if sec is not None else None) or "Otros"
+                            if s in ("–","",None): s="Otros"
+                        sw[s]=sw.get(s,0)+wnorm[a]
+                if sw and not (len(sw)==1 and list(sw.keys())[0]=="Otros"):
                     sec_colors=px.colors.qualitative.Pastel[:len(sw)]
                     fig=go.Figure(go.Pie(labels=list(sw.keys()),values=list(sw.values()),
                         marker_colors=sec_colors,hole=.4,textinfo="label+percent"))
                     fig.update_layout(height=280,margin=dict(l=0,r=0,t=5,b=0),showlegend=False)
-                    st.plotly_chart(fig,use_container_width=True)
+                    st.plotly_chart(fig,use_container_width=True,key="chart_pie_sector")
+                else:
+                    st.caption("ℹ️ No hay información de sectores disponible para estos activos "
+                               "(por ejemplo, si son solo instrumentos de renta fija).")
 
             # Evolución histórica — filtrada por chart_years, siempre desde capital inicial
             st.markdown("##### 📈 Evolución histórica del capital")
+            chart_years=st.selectbox("Ver gráfico desde hace",["1y","2y","3y","5y","10y","15y"],index=3,
+                                     key="chart_years_sel",
+                                     help="Solo afecta la vista de este gráfico. La optimización siempre usa 15 años.")
             pr_full,wl_full,dd_full,bw_full,bdd_full=wdd(wnorm,st.session_state.returns,st.session_state.bench_rets,capital)
 
             # Filtrar al rango visual seleccionado
@@ -667,7 +680,7 @@ if show_tab3:
             fig.update_yaxes(tickformat=".0%",row=2,col=1)
             fig.update_layout(height=520,margin=dict(l=0,r=0,t=25,b=0),
                              legend=dict(orientation="h",y=-0.08,font=dict(size=10)))
-            st.plotly_chart(fig,use_container_width=True)
+            st.plotly_chart(fig,use_container_width=True,key="chart_evol_hist")
 
             # Métricas históricas del rango visible
             ann_r=np.exp(pr.mean()*PPY)-1; ann_v=pr.std(ddof=1)*np.sqrt(PPY)
@@ -746,14 +759,14 @@ if show_tab3:
                         marker_color=bar_colors, text=[f"{r['ret']:.1%}" for _,r,_ in rows],
                         textposition="outside"))
                     fr.update_yaxes(tickformat=".0%"); fr.update_layout(height=260,margin=dict(l=0,r=0,t=5,b=0))
-                    st.plotly_chart(fr,use_container_width=True)
+                    st.plotly_chart(fr,use_container_width=True,key="chart_bench_ret")
                 with cbar2:
                     st.caption("Sharpe (retorno ajustado por riesgo)")
                     fs = go.Figure(go.Bar(x=names, y=[r['sharpe'] for _,r,_ in rows],
                         marker_color=bar_colors, text=[f"{r['sharpe']:.2f}" for _,r,_ in rows],
                         textposition="outside"))
                     fs.update_layout(height=260,margin=dict(l=0,r=0,t=5,b=0))
-                    st.plotly_chart(fs,use_container_width=True)
+                    st.plotly_chart(fs,use_container_width=True,key="chart_bench_sharpe")
 
                 # Lectura automática
                 best_sh = max(rows, key=lambda x: (x[1]['sharpe'] if np.isfinite(x[1]['sharpe']) else -99))
@@ -862,7 +875,7 @@ if show_tab4:
             fig1.update_yaxes(tickprefix="$",tickformat=",.0f")
             fig1.update_layout(height=380,margin=dict(l=0,r=0,t=5,b=0),
                               legend=dict(orientation="h",y=-0.12))
-            st.plotly_chart(fig1,use_container_width=True)
+            st.plotly_chart(fig1,use_container_width=True,key="chart_mc_bands")
 
             # Interpretación MC
             st.info(
@@ -907,7 +920,7 @@ if show_tab4:
             fig2.update_yaxes(tickprefix="$",tickformat=",.0f")
             fig2.update_layout(height=420,margin=dict(l=0,r=0,t=5,b=0),
                               legend=dict(orientation="h",y=-0.12))
-            st.plotly_chart(fig2,use_container_width=True)
+            st.plotly_chart(fig2,use_container_width=True,key="chart_mc_gbm")
 
             # Interpretación GBM
             st.info(
@@ -1015,7 +1028,7 @@ conjunto de futuros posibles."""
                 fig.update_yaxes(tickformat=".1%")
                 fig.update_layout(barmode="group",height=340,margin=dict(l=0,r=0,t=5,b=0),
                                   legend=dict(orientation="h",y=1.12,font=dict(size=10)))
-                st.plotly_chart(fig,use_container_width=True)
+                st.plotly_chart(fig,use_container_width=True,key="chart_stress_bar")
                 st.markdown("##### Detalle de cada crisis")
                 for s in avail:
                     ic="🔴" if s.port_return<0 else "🟢"; diff=s.port_return-s.benchmark_return
