@@ -101,10 +101,51 @@ h4, h5 { color: #2e5e8c !important; font-weight: 600 !important; }
 }
 
 /* Divisores más sutiles */
-hr { border-color: #e6edf5 !important; }
+hr { border-color: #e6edf5 !important; margin: 1.1rem 0 !important; }
 
 /* Radio buttons y checkboxes con acento de marca */
 .stRadio [data-baseweb="radio"] div[aria-checked="true"] { border-color: #2e5e8c !important; }
+
+/* ══ MÉTRICAS MÁS GRANDES Y LEGIBLES ══ */
+[data-testid="stMetricValue"] {
+    font-size: 2.1rem !important;
+    line-height: 1.1 !important;
+}
+[data-testid="stMetricLabel"] p {
+    font-size: 0.9rem !important;
+    font-weight: 600 !important;
+}
+[data-testid="stMetricDelta"] { font-size: 0.95rem !important; }
+
+/* Más aire entre secciones del contenido principal */
+.block-container { padding-top: 2.2rem !important; padding-bottom: 3rem !important; }
+.main .block-container { max-width: 1200px; }
+
+/* Títulos de sección (h5) con un poco más de presencia y espacio arriba */
+h5 { margin-top: 1.4rem !important; font-size: 1.15rem !important; }
+h4 { font-size: 1.35rem !important; }
+
+/* ══ SIDEBAR MEJORADO ══ */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafd 100%);
+    border-right: 1px solid #e6edf5;
+}
+[data-testid="stSidebar"] .block-container { padding-top: 1.5rem !important; }
+/* Etiquetas de widgets del sidebar más marcadas */
+[data-testid="stSidebar"] label { font-weight: 600 !important; color: #34506e !important; }
+/* Number input del sidebar más grande */
+[data-testid="stSidebar"] .stNumberInput input { font-size: 1.15rem !important; font-weight: 700 !important; text-align: center; }
+/* Slider del sidebar con acento */
+[data-testid="stSidebar"] [data-testid="stSlider"] [role="slider"] { background: #2e5e8c !important; }
+
+/* Botones de la barra de pasos más altos */
+.stButton > button { min-height: 44px; }
+
+/* Toast/notificaciones */
+[data-testid="stToast"] { border-radius: 12px !important; }
+
+/* Cajas de éxito con verde de marca */
+[data-testid="stNotificationContentSuccess"] { font-size: 0.98rem; }
 </style>
 """, unsafe_allow_html=True)
 RF,PPY = 0.02,52
@@ -461,32 +502,68 @@ with st.sidebar:
         eq_t,fi_t,capital = 0.5,0.5,100_000   # defaults (no se usan hasta elegir modo)
     else:
         _mode_label = "🤖 Automático" if st.session_state.mode=="auto" else "🎛️ Manual"
-        st.caption(f"Modo: **{_mode_label}**")
-        if st.button("↔️ Cambiar modo", use_container_width=True):
-            st.session_state.mode=None; st.rerun()
+        mc1,mc2=st.columns([1.4,1])
+        mc1.markdown(f"<div style='font-size:0.8rem;color:#7a8ba0;'>Modo actual</div>"
+                     f"<div style='font-weight:700;color:#2e5e8c;'>{_mode_label}</div>",unsafe_allow_html=True)
+        with mc2:
+            if st.button("Cambiar", use_container_width=True):
+                st.session_state.mode=None; st.rerun()
         st.divider()
-        # Perfil por porcentajes editables (se detecta el nombre automáticamente)
-        st.markdown("**⚖️ Perfil de riesgo**")
-        st.caption("¿Cuánto riesgo aceptas? Sube la renta variable para buscar más ganancia "
-                   "(más riesgo), o bájala para mayor seguridad.")
+
+        # ── Perfil de riesgo ──
+        st.markdown("### ⚖️ Perfil de riesgo")
+        st.caption("¿Cuánto riesgo aceptas? Más renta variable = más ganancia potencial "
+                   "pero más riesgo.")
         rv_pct=st.number_input("Renta variable (%)",0,100,
                                 int(st.session_state.get("_rv_pct",50)),5,key="rv_pct_input",
                                 help="Porcentaje de tu dinero en inversiones de mayor riesgo y "
                                      "mayor ganancia potencial (acciones, ETFs de equity).")
         rf_pct=100-rv_pct
-        st.caption(f"Renta fija: **{rf_pct}%** (el resto, en inversiones más seguras)")
         st.session_state._rv_pct=rv_pct
         eq_t,fi_t=rv_pct/100.0, rf_pct/100.0
+        # Barra visual de la división RV/RF
+        st.markdown(f"""
+        <div style="display:flex; height:26px; border-radius:8px; overflow:hidden; margin:6px 0 4px 0;
+                    box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+            <div style="width:{rv_pct}%; background:linear-gradient(90deg,#2e5e8c,#3d7ab8);
+                        color:white; font-size:0.72rem; font-weight:700; display:flex;
+                        align-items:center; justify-content:center;">{rv_pct}%</div>
+            <div style="width:{rf_pct}%; background:linear-gradient(90deg,#2ca02c,#4cb84c);
+                        color:white; font-size:0.72rem; font-weight:700; display:flex;
+                        align-items:center; justify-content:center;">{rf_pct}%</div>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-size:0.72rem; color:#7a8ba0; margin-bottom:8px;">
+            <span>🔵 Renta variable</span><span>Renta fija 🟢</span>
+        </div>
+        """, unsafe_allow_html=True)
+
         _perfil_nombre,_perfil_desc=detectar_perfil(rv_pct)
         _emoji_perfil = "🛡️" if rv_pct<=35 else ("⚖️" if rv_pct<=65 else "🚀")
-        st.info(f"{_emoji_perfil} **Perfil: {_perfil_nombre}** ({rv_pct}/{rf_pct})\n\n{_perfil_desc}")
+        _color_perfil = "#2ca02c" if rv_pct<=35 else ("#2e5e8c" if rv_pct<=65 else "#d6604d")
+        st.markdown(f"""
+        <div style="background:white; border-left:4px solid {_color_perfil}; border-radius:10px;
+                    padding:12px 14px; box-shadow:0 2px 8px rgba(30,60,90,0.06); margin-bottom:4px;">
+            <div style="font-size:0.75rem; color:#7a8ba0; font-weight:600;">TU PERFIL</div>
+            <div style="font-size:1.25rem; font-weight:800; color:{_color_perfil};">{_emoji_perfil} {_perfil_nombre}</div>
+            <div style="font-size:0.82rem; color:#64748b; margin-top:2px;">{_perfil_desc}</div>
+        </div>
+        """, unsafe_allow_html=True)
         st.divider()
-        capital=st.slider("💵 ¿Cuánto quieres invertir? (USD)",1_000,1_000_000,100_000,1_000,format="$%d",
+
+        # ── Inversión ──
+        st.markdown("### 💵 Monto a invertir")
+        capital=st.slider("¿Cuánto quieres invertir? (USD)",1_000,1_000_000,100_000,1_000,format="$%d",
+                          label_visibility="collapsed",
                           help="El monto que quieres simular. Puedes cambiarlo cuando quieras.")
-        with st.expander("⚙️ Avanzado"):
+        st.markdown(f"<div style='text-align:center; font-size:1.6rem; font-weight:800; color:#1a3a5c; "
+                    f"margin-top:-6px;'>${capital:,.0f}</div>",unsafe_allow_html=True)
+        st.divider()
+        with st.expander("⚙️ Detalles avanzados"):
             _p=RiskProfile.for_split(eq_t,fi_t)
-            st.caption(f"RF: {FICO_DISPLAY} · {FICO.ret_annual:.2%} | Beta: {_p.beta_min:.2f}–{_p.beta_max:.2f} | DD máx: {_p.max_drawdown:.0%}")
-            st.caption("Optimización siempre usa **15 años** de datos.")
+            st.caption(f"Fondo de inversión: {FICO.ret_annual:.2%} anual")
+            st.caption(f"Beta objetivo: {_p.beta_min:.2f} a {_p.beta_max:.2f}")
+            st.caption(f"Caída máxima tolerada: {_p.max_drawdown:.0%}")
+            st.caption("Los cálculos usan 15 años de datos históricos.")
 
 # Descargar siempre con 15 años (fijo)
 OPT_PERIOD = "15y"
@@ -894,18 +971,27 @@ if show_tab3:
             st.markdown("##### 🎯 Métricas esperadas del portafolio")
             st.caption("Esto es lo que el modelo espera de tu cartera. Pasa el cursor sobre el "
                        "signo ❓ de cada número para entender qué significa.")
-            m1,m2,m3,m4=st.columns(4)
-            m1.metric("Retorno esperado anual",f"{p_r:.2%}",
-                      help="Cuánto se espera que rinda el portafolio por año, según el modelo "
-                           "Black-Litterman. Es una expectativa a futuro, no una garantía.")
-            m2.metric("Riesgo (volatilidad anual)",f"{p_v:.2%}",
-                      help="Qué tanto puede moverse el portafolio en un año. Más alto = más incertidumbre.")
-            m3.metric("Sharpe",f"{p_sh:.2f}",
-                      help="Retorno por unidad de riesgo. Mide cuánto rendimiento extra obtienes por "
-                           "cada punto de riesgo que asumes. Más alto es mejor; arriba de 1 se considera bueno.")
-            m4.metric("Beta",f"{p_bt:.2f}",
-                      help="Sensibilidad al mercado. Beta 1 = se mueve igual que el mercado; "
-                           "menor a 1 = más defensivo; mayor a 1 = más agresivo.")
+            mbig, mrest = st.columns([1.3,2.2])
+            with mbig:
+                st.markdown(f"""
+                <div style="background:linear-gradient(135deg,#eef5fc 0%,#dcebf9 100%);
+                            border:1.5px solid #cfe0f0; border-radius:14px; padding:16px 20px;">
+                    <div style="font-size:0.85rem; color:#5a7290; font-weight:600;">Retorno esperado anual</div>
+                    <div style="font-size:2.6rem; font-weight:800; color:#2e5e8c; line-height:1.1;">{p_r:.1%}</div>
+                    <div style="font-size:0.8rem; color:#7a8ba0;">Lo que el modelo estima por año</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with mrest:
+                mm1,mm2,mm3=st.columns(3)
+                mm1.metric("Riesgo",f"{p_v:.1%}",
+                           help="Volatilidad anual. Qué tanto puede moverse el portafolio en un año. "
+                                "Más alto = más incertidumbre.")
+                mm2.metric("Sharpe",f"{p_sh:.2f}",
+                           help="Retorno por unidad de riesgo. Mide cuánto rendimiento extra obtienes por "
+                                "cada punto de riesgo. Más alto es mejor; arriba de 1 se considera bueno.")
+                mm3.metric("Beta",f"{p_bt:.2f}",
+                           help="Sensibilidad al mercado. Beta 1 = se mueve igual que el mercado; "
+                                "menor a 1 = más defensivo; mayor a 1 = más agresivo.")
 
             # Gráficos: composición por activo + por sector
             st.markdown("##### 🥧 Composición del portafolio")
@@ -1174,16 +1260,32 @@ if show_tab4:
         mc=st.session_state.get("mc")
         if mc:
             p5_top=mc.percentiles[5][-1]; p50_top=mc.median_path[-1]; p95_top=mc.percentiles[95][-1]
-            st.markdown(f"### 📌 Proyección de la inversión a {mh} año(s)")
-            st.success(f"En un horizonte de **{mc.horizon_years:.0f} año(s)**, la inversión inicial de "
-                       f"{usd(mc.capital)} presenta un rango proyectado de resultados entre "
-                       f"**{usd(p5_top)}** (escenario pesimista) y "
-                       f"**{usd(p95_top)}** (escenario optimista). "
-                       f"El valor estimado bajo el escenario base es **{usd(p50_top)}**.")
-            tc1,tc2,tc3=st.columns(3)
-            tc1.metric("Escenario pesimista (P5)",f"${p5_top:,.0f}",delta=f"{p5_top/mc.capital-1:+.1%}")
-            tc2.metric("Escenario base (P50)",f"${p50_top:,.0f}",delta=f"{p50_top/mc.capital-1:+.1%}")
-            tc3.metric("Escenario optimista (P95)",f"${p95_top:,.0f}",delta=f"{p95_top/mc.capital-1:+.1%}")
+            _g5=p5_top/mc.capital-1; _g50=p50_top/mc.capital-1; _g95=p95_top/mc.capital-1
+            st.markdown(f"### 🔮 Proyección de tu inversión a {mh} año(s)")
+            st.markdown(f"""
+            <div style="background:linear-gradient(135deg,#2e5e8c 0%,#3d7ab8 100%); border-radius:16px;
+                        padding:20px 24px; color:white; box-shadow:0 6px 22px rgba(46,94,140,0.28); margin-bottom:14px;">
+                <div style="font-size:0.9rem; opacity:0.85;">Tu inversión de ${mc.capital:,.0f} podría convertirse en</div>
+                <div style="font-size:2.8rem; font-weight:800; line-height:1.1; margin:4px 0;">${p50_top:,.0f}</div>
+                <div style="font-size:0.95rem; opacity:0.9;">en el escenario más probable
+                    ({'ganancia' if _g50>=0 else 'pérdida'} de {abs(_g50):.1%})</div>
+            </div>
+            """, unsafe_allow_html=True)
+            tcards = [
+                ("😟 Escenario pesimista", p5_top, _g5, "#d6604d", "Si el mercado va mal"),
+                ("🎯 Escenario base", p50_top, _g50, "#2e5e8c", "Lo más probable"),
+                ("🚀 Escenario optimista", p95_top, _g95, "#2ca02c", "Si el mercado va bien"),
+            ]
+            tcols=st.columns(3)
+            for col,(titulo,valor,gan,color,sub) in zip(tcols,tcards):
+                col.markdown(f"""
+                <div style="background:white; border-top:4px solid {color}; border-radius:12px;
+                            padding:14px 16px; box-shadow:0 2px 10px rgba(30,60,90,0.07); text-align:center;">
+                    <div style="font-size:0.82rem; color:#64748b; font-weight:600;">{titulo}</div>
+                    <div style="font-size:1.7rem; font-weight:800; color:{color}; margin:4px 0;">${valor:,.0f}</div>
+                    <div style="font-size:0.8rem; color:#94a3b8;">{sub} · {gan:+.1%}</div>
+                </div>
+                """, unsafe_allow_html=True)
         st.divider()
 
         # MONTE CARLO (detalle)
