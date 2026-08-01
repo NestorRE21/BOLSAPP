@@ -503,13 +503,22 @@ depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
             st.caption(f"ℹ️ No se encontraron resultados compatibles con **{add_to}**. "
                        f"Se encontraron {len(raw_res)} de otra clase.")
         if res:
-            st.caption("Resultados de la búsqueda (pulsa para agregar):")
+            st.caption("Resultados de la búsqueda (pasa el cursor para ver detalles, pulsa para agregar):")
+            # Traducción amigable del tipo de instrumento
+            _tipo_map={"EQUITY":"Acción de empresa","ETF":"Fondo cotizado (ETF)",
+                       "MUTUALFUND":"Fondo de inversión","INDEX":"Índice de mercado",
+                       "CURRENCY":"Moneda","CRYPTOCURRENCY":"Criptomoneda"}
             cols=st.columns(min(len(res[:6]),3))
             for i,r in enumerate(res[:6]):
                 with cols[i%len(cols)]:
                     _nombre = (r['nm'] or r['tk']).strip()
                     _nombre_corto = _nombre[:26] + ("…" if len(_nombre)>26 else "")
-                    if st.button(f"➕ {_nombre_corto}  ({r['tk']})",key=f"a_{r['tk']}",use_container_width=True):
+                    _tipo = _tipo_map.get(r.get('tp',''), r.get('tp','') or "Instrumento")
+                    _bolsa = r.get('ex','')
+                    _help = f"**{_nombre}**\n\nCódigo (ticker): {r['tk']}\n\nTipo: {_tipo}"
+                    if _bolsa: _help += f"\n\nBolsa: {_bolsa}"
+                    if st.button(f"➕ {_nombre_corto}  ({r['tk']})",key=f"a_{r['tk']}",
+                                 use_container_width=True,help=_help):
                         tk=r['tk']
                         st.session_state.asset_names[tk]=_nombre   # recordar el nombre real
                         if add_to=="🔵 Renta variable":
@@ -764,14 +773,18 @@ if show_tab3:
 
                 ws=wnorm[wnorm>1e-4]
                 colors=px.colors.qualitative.Set2[:len(ws)]
+                _nombres=[nombre_activo(a) for a in ws.index.tolist()]
                 fig=go.Figure(go.Pie(labels=[disp(a) for a in ws.index.tolist()],values=ws.values.tolist(),
-                    marker_colors=colors,hole=.4,textinfo="label+percent"))
+                    marker_colors=colors,hole=.4,textinfo="label+percent",
+                    customdata=_nombres,
+                    hovertemplate="<b>%{customdata}</b><br>Peso: %{percent}<extra></extra>"))
                 fig.update_layout(height=280,margin=dict(l=0,r=0,t=5,b=0),showlegend=False)
                 st.plotly_chart(fig,use_container_width=True,key="chart_pie_activo",config={"displayModeBar":False})
             with g2:
                 st.caption("Por sector")
                 sec=st.session_state.sectors
-                sw={}
+                sw={}                 # sector -> peso total
+                sw_assets={}          # sector -> lista de nombres de activos
                 for a in wnorm.index:
                     if wnorm[a]>1e-4:
                         # Sector con fallbacks útiles según el tipo de activo
@@ -783,12 +796,23 @@ if show_tab3:
                             s=(sec.get(a) if sec is not None else None) or "Otros"
                             if s in ("–","",None): s="Otros"
                         sw[s]=sw.get(s,0)+wnorm[a]
+                        sw_assets.setdefault(s,[]).append(nombre_activo(a))
                 if sw and not (len(sw)==1 and list(sw.keys())[0]=="Otros"):
                     sec_colors=px.colors.qualitative.Pastel[:len(sw)]
-                    fig=go.Figure(go.Pie(labels=list(sw.keys()),values=list(sw.values()),
-                        marker_colors=sec_colors,hole=.4,textinfo="label+percent"))
+                    _labels=list(sw.keys())
+                    # Texto de hover: qué activos componen cada sector
+                    _hover=["<b>"+lbl+"</b><br>"+", ".join(sw_assets[lbl][:6])
+                            +(f" y {len(sw_assets[lbl])-6} más" if len(sw_assets[lbl])>6 else "")
+                            for lbl in _labels]
+                    fig=go.Figure(go.Pie(labels=_labels,values=list(sw.values()),
+                        marker_colors=sec_colors,hole=.4,textinfo="label+percent",
+                        customdata=_hover,
+                        hovertemplate="%{customdata}<br>Peso: %{percent}<extra></extra>"))
                     fig.update_layout(height=280,margin=dict(l=0,r=0,t=5,b=0),showlegend=False)
                     st.plotly_chart(fig,use_container_width=True,key="chart_pie_sector",config={"displayModeBar":False})
+                    if "Otros" in sw:
+                        st.caption("💡 Pasa el cursor sobre el gráfico para ver qué inversiones "
+                                   "hay en cada sector, incluido \"Otros\".")
                 else:
                     st.caption("ℹ️ No hay información de sectores disponible para estos activos "
                                "(por ejemplo, si son solo instrumentos de renta fija).")
