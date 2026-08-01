@@ -50,6 +50,23 @@ POPULARES_BK = [
     ("^GSPC","S&P 500 (EE.UU.)","🇺🇸"),("^IXIC","Nasdaq (tecnología)","💻"),
     ("^DJI","Dow Jones","🏭"),("ACWI","Mundo (ACWI)","🌍"),
 ]
+
+# Mapa ticker → nombre amigable (a partir de los catálogos populares)
+_NOMBRES_CONOCIDOS = {}
+for _cat in (POPULARES_RV, POPULARES_RF, POPULARES_BK):
+    for _tk,_nm,_emo in _cat:
+        _NOMBRES_CONOCIDOS[_tk] = _nm
+
+def nombre_activo(tk):
+    """Nombre amigable de un ticker: catálogo conocido, nombre buscado, o el ticker."""
+    if tk == FICO_TK: return FICO_DISPLAY
+    if tk in _NOMBRES_CONOCIDOS: return _NOMBRES_CONOCIDOS[tk]
+    try:
+        nm = st.session_state.get("asset_names",{}).get(tk)
+        if nm: return nm
+    except Exception:
+        pass
+    return tk
 C_RV,C_RF,C_OPT = "#2E5E8C","#2CA02C","#D6604D"
 BC = ["#888","#E377C2","#FF7F0E","#9467BD","#17BECF"]
 
@@ -60,7 +77,7 @@ def usd(x):
 for k,v in {"tickers":[],"rf_tickers":[],"include_fico":True,"benchmarks":["^GSPC"],"views":[],"optimized":False,"result":None,
             "manual_weights":None,"returns":None,"bench_rets":None,"betas":None,"sectors":None,
             "returns_full":None,"bench_full":None,"last_period":None,"data_range":"",
-            "mode":None,"gk_ic":0.05,"step":0,"_w_ver":0}.items():
+            "mode":None,"gk_ic":0.05,"step":0,"_w_ver":0,"asset_names":{}}.items():
     st.session_state.setdefault(k,v)
 
 # ═══════════════════ BACKEND ══════════════════════════════════════════════════
@@ -490,14 +507,17 @@ depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
             cols=st.columns(min(len(res[:6]),3))
             for i,r in enumerate(res[:6]):
                 with cols[i%len(cols)]:
-                    if st.button(f"➕ {r['tk']}  ·  {r['nm'][:22]}",key=f"a_{r['tk']}",use_container_width=True):
+                    _nombre = (r['nm'] or r['tk']).strip()
+                    _nombre_corto = _nombre[:26] + ("…" if len(_nombre)>26 else "")
+                    if st.button(f"➕ {_nombre_corto}  ({r['tk']})",key=f"a_{r['tk']}",use_container_width=True):
                         tk=r['tk']
+                        st.session_state.asset_names[tk]=_nombre   # recordar el nombre real
                         if add_to=="🔵 Renta variable":
-                            if tk not in st.session_state.tickers: st.session_state.tickers.append(tk); st.toast(f"✓ {tk} → RV")
+                            if tk not in st.session_state.tickers: st.session_state.tickers.append(tk); st.toast(f"✓ {_nombre} agregado")
                         elif add_to=="🟢 Renta fija":
-                            if tk not in st.session_state.rf_tickers: st.session_state.rf_tickers.append(tk); st.toast(f"✓ {tk} → RF")
+                            if tk not in st.session_state.rf_tickers: st.session_state.rf_tickers.append(tk); st.toast(f"✓ {_nombre} agregado")
                         else:
-                            if tk not in st.session_state.benchmarks: st.session_state.benchmarks.append(tk); st.toast(f"✓ {tk} → Benchmark")
+                            if tk not in st.session_state.benchmarks: st.session_state.benchmarks.append(tk); st.toast(f"✓ {_nombre} agregado")
 
     # ── Inversiones populares (un clic, sin conocer tickers) ──────────────
     with st.expander("⭐ ¿No sabes qué agregar? Elige de las inversiones más populares", expanded=not st.session_state.tickers):
@@ -528,7 +548,9 @@ depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
     with la:
         st.caption(f"**🔵 Renta variable ({len(st.session_state.tickers)})**")
         for i,t in enumerate(st.session_state.tickers):
-            c1,c2=st.columns([5,1]); c1.write(t)
+            c1,c2=st.columns([5,1])
+            _n=nombre_activo(t)
+            c1.write(f"**{_n}**" + (f"  ·  {t}" if _n!=t else ""))
             if c2.button("✕",key=f"ra{i}"):
                 rm=st.session_state.tickers.pop(i)
                 st.session_state.views=[v for v in st.session_state.views if v.get("asset")!=rm and v.get("long")!=rm and v.get("short")!=rm]
@@ -540,14 +562,18 @@ depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
         if include_fico:
             st.caption(f"✓ {FICO_DISPLAY} · {FICO.ret_annual:.2%} anual")
         for i,t in enumerate(st.session_state.rf_tickers):
-            c1,c2=st.columns([5,1]); c1.write(t)
+            c1,c2=st.columns([5,1])
+            _n=nombre_activo(t)
+            c1.write(f"**{_n}**" + (f"  ·  {t}" if _n!=t else ""))
             if c2.button("✕",key=f"rrf{i}"): st.session_state.rf_tickers.pop(i)
         if not st.session_state.rf_tickers and not include_fico:
             st.warning("Sin activos de renta fija.")
     with lc:
         st.caption(f"**📊 Benchmarks ({len(st.session_state.benchmarks)})**")
         for i,b in enumerate(st.session_state.benchmarks):
-            c1,c2=st.columns([5,1]); c1.write(b)
+            c1,c2=st.columns([5,1])
+            _n=nombre_activo(b)
+            c1.write(f"**{_n}**" + (f"  ·  {b}" if _n!=b else ""))
             if c2.button("✕",key=f"rb{i}"): st.session_state.benchmarks.pop(i)
 
     # ── Continuar (descarga automática) ──────────────────────────────────
