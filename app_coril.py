@@ -40,7 +40,7 @@ def usd(x):
 for k,v in {"tickers":[],"rf_tickers":[],"include_fico":True,"benchmarks":["^GSPC"],"views":[],"optimized":False,"result":None,
             "manual_weights":None,"returns":None,"bench_rets":None,"betas":None,"sectors":None,
             "returns_full":None,"bench_full":None,"last_period":None,"data_range":"",
-            "mode":None,"gk_ic":0.05,"step":0}.items():
+            "mode":None,"gk_ic":0.05,"step":0,"_w_ver":0}.items():
     st.session_state.setdefault(k,v)
 
 # ═══════════════════ BACKEND ══════════════════════════════════════════════════
@@ -318,25 +318,28 @@ with st.sidebar:
             st.session_state.mode=None; st.rerun()
         st.divider()
     # Perfil por porcentajes editables (se detecta el nombre automáticamente)
-    st.markdown("**Perfil de riesgo**")
-    st.caption("Ajusta los porcentajes de renta variable y renta fija. "
-               "El perfil se detecta automáticamente.")
+    st.markdown("**⚖️ Perfil de riesgo**")
+    st.caption("¿Cuánto riesgo aceptas? Sube la renta variable para buscar más ganancia "
+               "(más riesgo), o bájala para mayor seguridad.")
     pc1,pc2=st.columns(2)
     rv_pct=pc1.number_input("Renta variable (%)",0,100,
-                            int(st.session_state.get("_rv_pct",50)),5,key="rv_pct_input")
+                            int(st.session_state.get("_rv_pct",50)),5,key="rv_pct_input",
+                            help="Porcentaje de tu dinero en inversiones de mayor riesgo y "
+                                 "mayor ganancia potencial (acciones, ETFs de equity).")
     rf_pct=100-rv_pct
-    pc2.metric("Renta fija (%)",f"{rf_pct}%")
+    pc2.metric("Renta fija (%)",f"{rf_pct}%",help="El resto va a inversiones más seguras y estables.")
     st.session_state._rv_pct=rv_pct
     eq_t,fi_t=rv_pct/100.0, rf_pct/100.0
     _perfil_nombre,_perfil_desc=detectar_perfil(rv_pct)
-    st.info(f"**Perfil detectado: {_perfil_nombre}** ({rv_pct}/{rf_pct}) · {_perfil_desc}")
+    _emoji_perfil = "🛡️" if rv_pct<=35 else ("⚖️" if rv_pct<=65 else "🚀")
+    st.info(f"{_emoji_perfil} **Perfil: {_perfil_nombre}** ({rv_pct}/{rf_pct})\n\n{_perfil_desc}")
     st.divider()
-    capital=st.slider("Inversión (USD)",1_000,1_000_000,100_000,1_000,format="$%d")
+    capital=st.slider("💵 ¿Cuánto quieres invertir? (USD)",1_000,1_000_000,100_000,1_000,format="$%d",
+                      help="El monto que quieres simular. Puedes cambiarlo cuando quieras.")
     with st.expander("⚙️ Avanzado"):
         _p=RiskProfile.for_split(eq_t,fi_t)
         st.caption(f"RF: {FICO_DISPLAY} · {FICO.ret_annual:.2%} | Beta: {_p.beta_min:.2f}–{_p.beta_max:.2f} | DD máx: {_p.max_drawdown:.0%}")
         st.caption("Optimización siempre usa **15 años** de datos.")
-        if st.button("🗑️ Limpiar caché",use_container_width=True): st.cache_data.clear(); st.toast("✓")
 
 # Descargar siempre con 15 años (fijo)
 OPT_PERIOD = "15y"
@@ -344,30 +347,34 @@ OPT_PERIOD = "15y"
 # ═══════════════════ PANTALLA DE MODO ═════════════════════════════════════════
 if st.session_state.mode is None:
     st.title("Simulador de inversiones – Coril SAB")
-    st.markdown("### ¿Cómo quieres construir el portafolio?")
+    st.markdown("#### 👋 Bienvenido")
+    st.write("Esta herramienta te ayuda a **diseñar una cartera de inversión** y ver cómo "
+             "podría comportarse en el futuro, de forma sencilla y visual. "
+             "No necesitas experiencia previa.")
+    st.markdown("### ¿Cómo quieres empezar?")
     st.write("")
     cm1, cm2 = st.columns(2)
     with cm1:
-        st.markdown("#### 🤖 Automático")
-        st.caption("El sistema calcula por ti las expectativas de retorno de cada activo. "
-                   "Solo eliges los activos y el perfil de riesgo, y obtienes el portafolio "
-                   "y las proyecciones al instante.")
-        st.markdown("- Expectativas calculadas automáticamente\n"
-                    "- Combina tendencia (momentum) y estabilidad (baja volatilidad)\n"
-                    "- Ideal para un análisis rápido y objetivo")
-        if st.button("Usar modo Automático", type="primary", use_container_width=True):
+        st.markdown("#### 🤖 Modo Automático")
+        st.caption("**Recomendado si estás empezando.** Tú solo eliges en qué invertir y "
+                   "cuánto riesgo aceptas; el sistema hace todos los cálculos por ti.")
+        st.markdown("- ✅ El sistema decide las mejores proporciones\n"
+                    "- ✅ Resultados y gráficos al instante\n"
+                    "- ✅ Perfecto para un primer análisis")
+        if st.button("Empezar con modo Automático", type="primary", use_container_width=True):
             st.session_state.mode="auto"; st.rerun()
     with cm2:
-        st.markdown("#### 🎛️ Manual")
-        st.caption("Tú defines las expectativas de retorno de cada activo. "
-                   "Control total sobre los supuestos que alimentan el modelo.")
+        st.markdown("#### 🎛️ Modo Manual")
+        st.caption("**Para usuarios con experiencia.** Tú defines tus propias expectativas de "
+                   "retorno para cada inversión y controlas todos los supuestos.")
         st.markdown("- Ingresas tus propias expectativas\n"
                     "- Ajustas el nivel de confianza de cada una\n"
-                    "- Ideal si tienes una tesis de inversión propia")
+                    "- Ideal si ya tienes una idea de inversión")
         if st.button("Usar modo Manual", type="primary", use_container_width=True):
             st.session_state.mode="manual"; st.rerun()
     st.write("")
-    st.info("💡 Podrás cambiar de modo en cualquier momento desde la barra lateral.")
+    st.info("💡 Podrás cambiar de modo en cualquier momento. Nada es definitivo — "
+            "es un simulador para explorar con tranquilidad.")
     st.stop()
 
 AUTO = st.session_state.mode == "auto"
@@ -420,8 +427,30 @@ def nav_buttons(back_to=None, next_to=None, next_label="Siguiente →", back_lab
 
 # ═══════════════════ TAB 1 ════════════════════════════════════════════════════
 if show_tab1:
+    st.markdown("### 📥 Paso 1: Elige en qué invertir")
+    st.write("Busca empresas o fondos y agrégalos a tu cartera. Si no sabes por dónde empezar, "
+             "usa el botón **Cargar ejemplo** más abajo.")
+    with st.expander("❓ No sé qué es renta variable ni renta fija — explícamelo"):
+        st.markdown(
+            """**Renta variable** 🔵 — Son inversiones que pueden subir o bajar bastante de valor,
+como las **acciones** de empresas (Apple, Microsoft) o fondos que las agrupan (ETFs).
+Ofrecen más ganancia potencial, pero también más riesgo.
+
+**Renta fija** 🟢 — Son inversiones más estables y predecibles, como los **bonos** o los
+**fondos de inversión** de deuda. Ganan menos, pero son más seguras. Sirven para dar
+estabilidad a tu cartera.
+
+**Benchmark** 📊 — Es un punto de referencia para comparar. Por ejemplo, el índice
+**S&P 500** (^GSPC) representa a las 500 empresas más grandes de EE.UU. Sirve para saber
+si tu cartera lo hace mejor o peor que "el mercado".
+
+**Consejo:** una cartera equilibrada combina un poco de cada una. Cuánto de cada tipo
+depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
+        )
     col_s,col_t=st.columns([4,1])
-    with col_t: add_to=st.radio("Añadir como",["🔵 Renta variable","🟢 Renta fija","📊 Benchmark"])
+    with col_t: add_to=st.radio("Añadir como",["🔵 Renta variable","🟢 Renta fija","📊 Benchmark"],
+                                help="Elige el tipo de inversión antes de buscar. "
+                                     "Las sugerencias se filtran según lo que elijas.")
     with col_s: q=st.text_input("🔍 Buscar (escribe el nombre y presiona Enter)",placeholder="Apple, TLT, SHY, AGG, ^GSPC…")
     if q.strip():
         raw_res=search_yf(q.strip())
@@ -442,6 +471,8 @@ if show_tab1:
                         else:
                             if tk not in st.session_state.benchmarks: st.session_state.benchmarks.append(tk); st.toast(f"✓ {tk} → Benchmark")
     if not st.session_state.tickers:
+        st.info("👇 ¿Primera vez? Pulsa aquí para cargar una cartera de ejemplo con empresas conocidas "
+                "(Apple, Microsoft, Nvidia…) y explorar cómo funciona.")
         if st.button("🚀 Cargar ejemplo",type="primary"):
             st.session_state.tickers=list(EJ); st.session_state.views=[]; st.session_state.rf_tickers=[]
 
@@ -572,6 +603,7 @@ if show_tab3:
                     if k.startswith("s_"): del st.session_state[k]
                 st.session_state.result=r; st.session_state.manual_weights=r.weights.copy(); st.session_state.optimized=True
                 st.session_state._auto_sig = sig
+                st.session_state["_w_ver"] = st.session_state.get("_w_ver",0)+1  # nueva versión de campos
                 for x in ["mc","stress"]:
                     if x in st.session_state: del st.session_state[x]
             st.success("Las expectativas de retorno se calcularon automáticamente combinando "
@@ -599,11 +631,16 @@ if show_tab3:
                     if k.startswith("s_"): del st.session_state[k]
                 st.session_state.result=r; st.session_state.manual_weights=r.weights.copy(); st.session_state.optimized=True
                 st.session_state._man_sig=man_sig
+                st.session_state["_w_ver"] = st.session_state.get("_w_ver",0)+1  # nueva versión de campos
                 for x in ["mc","stress"]:
                     if x in st.session_state: del st.session_state[x]
 
         if st.session_state.optimized and st.session_state.result:
             res=st.session_state.result
+            _wv=st.session_state.get("_w_ver",0)   # versión: refresca campos al recalcular
+            st.markdown("##### ⚖️ Cuánto poner en cada inversión")
+            st.caption("Estos son los porcentajes sugeridos para tu cartera. Puedes ajustarlos a mano "
+                       "si quieres: todo se actualiza al instante. Los porcentajes deberían sumar 100%.")
             # Pesos en 2 columnas lado a lado
             assets=list(res.weights.index); mid=len(assets)//2+len(assets)%2
             col_a,col_b,col_r=st.columns([2,2,1.5])
@@ -611,11 +648,11 @@ if show_tab3:
             with col_a:
                 for a in assets[:mid]:
                     ic="🟢" if a==FICO_TK else "🔵"
-                    nw[a]=st.number_input(f"{ic} {disp(a)}",0.0,100.0,round(float(res.weights[a])*100,1),0.5,"%.1f",key=f"s_{a}")
+                    nw[a]=st.number_input(f"{ic} {disp(a)}",0.0,100.0,round(float(res.weights[a])*100,1),0.5,"%.1f",key=f"s_{_wv}_{a}")
             with col_b:
                 for a in assets[mid:]:
                     ic="🟢" if a==FICO_TK else "🔵"
-                    nw[a]=st.number_input(f"{ic} {disp(a)}",0.0,100.0,round(float(res.weights[a])*100,1),0.5,"%.1f",key=f"s_{a}")
+                    nw[a]=st.number_input(f"{ic} {disp(a)}",0.0,100.0,round(float(res.weights[a])*100,1),0.5,"%.1f",key=f"s_{_wv}_{a}")
             wn=pd.Series(nw); tot=wn.sum(); wnorm=wn/tot if tot>0 else wn/100; st.session_state.manual_weights=wnorm
             eqw=float(wnorm[[a for a in wnorm.index if a!=FICO_TK]].sum()); fiw=float(wnorm.get(FICO_TK,0))
             with col_r:
@@ -629,6 +666,8 @@ if show_tab3:
             p_r=float(w_np@mu_np); p_v=float(np.sqrt(max(w_np@S_np@w_np,1e-10)))
             p_sh=(p_r-RF)/p_v if p_v>1e-10 else 0; p_bt=float(w_np@b_np)
             st.markdown("##### 🎯 Métricas esperadas del portafolio")
+            st.caption("Esto es lo que el modelo espera de tu cartera. Pasa el cursor sobre el "
+                       "signo ❓ de cada número para entender qué significa.")
             m1,m2,m3,m4=st.columns(4)
             m1.metric("Retorno esperado anual",f"{p_r:.2%}",
                       help="Cuánto se espera que rinda el portafolio por año, según el modelo "
