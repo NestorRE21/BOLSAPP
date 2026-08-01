@@ -311,35 +311,38 @@ def run_dl(period):
 # ═══════════════════ SIDEBAR ══════════════════════════════════════════════════
 with st.sidebar:
     st.title("📈 Coril")
-    if st.session_state.mode is not None:
+    if st.session_state.mode is None:
+        # Pantalla de bienvenida: sidebar mínimo, sin configuración todavía.
+        st.caption("Simulador de inversiones")
+        eq_t,fi_t,capital = 0.5,0.5,100_000   # defaults (no se usan hasta elegir modo)
+    else:
         _mode_label = "🤖 Automático" if st.session_state.mode=="auto" else "🎛️ Manual"
         st.caption(f"Modo: **{_mode_label}**")
         if st.button("↔️ Cambiar modo", use_container_width=True):
             st.session_state.mode=None; st.rerun()
         st.divider()
-    # Perfil por porcentajes editables (se detecta el nombre automáticamente)
-    st.markdown("**⚖️ Perfil de riesgo**")
-    st.caption("¿Cuánto riesgo aceptas? Sube la renta variable para buscar más ganancia "
-               "(más riesgo), o bájala para mayor seguridad.")
-    pc1,pc2=st.columns(2)
-    rv_pct=pc1.number_input("Renta variable (%)",0,100,
-                            int(st.session_state.get("_rv_pct",50)),5,key="rv_pct_input",
-                            help="Porcentaje de tu dinero en inversiones de mayor riesgo y "
-                                 "mayor ganancia potencial (acciones, ETFs de equity).")
-    rf_pct=100-rv_pct
-    pc2.metric("Renta fija (%)",f"{rf_pct}%",help="El resto va a inversiones más seguras y estables.")
-    st.session_state._rv_pct=rv_pct
-    eq_t,fi_t=rv_pct/100.0, rf_pct/100.0
-    _perfil_nombre,_perfil_desc=detectar_perfil(rv_pct)
-    _emoji_perfil = "🛡️" if rv_pct<=35 else ("⚖️" if rv_pct<=65 else "🚀")
-    st.info(f"{_emoji_perfil} **Perfil: {_perfil_nombre}** ({rv_pct}/{rf_pct})\n\n{_perfil_desc}")
-    st.divider()
-    capital=st.slider("💵 ¿Cuánto quieres invertir? (USD)",1_000,1_000_000,100_000,1_000,format="$%d",
-                      help="El monto que quieres simular. Puedes cambiarlo cuando quieras.")
-    with st.expander("⚙️ Avanzado"):
-        _p=RiskProfile.for_split(eq_t,fi_t)
-        st.caption(f"RF: {FICO_DISPLAY} · {FICO.ret_annual:.2%} | Beta: {_p.beta_min:.2f}–{_p.beta_max:.2f} | DD máx: {_p.max_drawdown:.0%}")
-        st.caption("Optimización siempre usa **15 años** de datos.")
+        # Perfil por porcentajes editables (se detecta el nombre automáticamente)
+        st.markdown("**⚖️ Perfil de riesgo**")
+        st.caption("¿Cuánto riesgo aceptas? Sube la renta variable para buscar más ganancia "
+                   "(más riesgo), o bájala para mayor seguridad.")
+        rv_pct=st.number_input("Renta variable (%)",0,100,
+                                int(st.session_state.get("_rv_pct",50)),5,key="rv_pct_input",
+                                help="Porcentaje de tu dinero en inversiones de mayor riesgo y "
+                                     "mayor ganancia potencial (acciones, ETFs de equity).")
+        rf_pct=100-rv_pct
+        st.caption(f"Renta fija: **{rf_pct}%** (el resto, en inversiones más seguras)")
+        st.session_state._rv_pct=rv_pct
+        eq_t,fi_t=rv_pct/100.0, rf_pct/100.0
+        _perfil_nombre,_perfil_desc=detectar_perfil(rv_pct)
+        _emoji_perfil = "🛡️" if rv_pct<=35 else ("⚖️" if rv_pct<=65 else "🚀")
+        st.info(f"{_emoji_perfil} **Perfil: {_perfil_nombre}** ({rv_pct}/{rf_pct})\n\n{_perfil_desc}")
+        st.divider()
+        capital=st.slider("💵 ¿Cuánto quieres invertir? (USD)",1_000,1_000_000,100_000,1_000,format="$%d",
+                          help="El monto que quieres simular. Puedes cambiarlo cuando quieras.")
+        with st.expander("⚙️ Avanzado"):
+            _p=RiskProfile.for_split(eq_t,fi_t)
+            st.caption(f"RF: {FICO_DISPLAY} · {FICO.ret_annual:.2%} | Beta: {_p.beta_min:.2f}–{_p.beta_max:.2f} | DD máx: {_p.max_drawdown:.0%}")
+            st.caption("Optimización siempre usa **15 años** de datos.")
 
 # Descargar siempre con 15 años (fijo)
 OPT_PERIOD = "15y"
@@ -388,20 +391,23 @@ st.title("Simulador de inversiones – Coril SAB")
 
 # Navegación tipo "pasos" (permite botones Siguiente/Atrás)
 if AUTO:
-    STEPS = ["1 · Activos","2 · Portafolio","3 · Proyecciones"]
+    STEPS = ["Elige inversiones","Tu cartera","Proyección a futuro"]
 else:
-    STEPS = ["1 · Activos","2 · Expectativas","3 · Portafolio","4 · Proyecciones"]
+    STEPS = ["Elige inversiones","Tus expectativas","Tu cartera","Proyección a futuro"]
 
 # Clamp del paso actual al rango válido
 st.session_state.step = max(0, min(st.session_state.step, len(STEPS)-1))
 
-# Barra de navegación superior (clicable)
+# Barra de navegación superior (clicable) con estado visual
 nav_cols = st.columns(len(STEPS))
 for i,label in enumerate(STEPS):
     with nav_cols[i]:
-        is_current = (i == st.session_state.step)
-        if st.button(label, key=f"nav_{i}", use_container_width=True,
-                     type="primary" if is_current else "secondary"):
+        cur = st.session_state.step
+        if i < cur:      icon="✓"      # completado
+        elif i == cur:   icon="●"      # actual
+        else:            icon=f"{i+1}"  # pendiente
+        if st.button(f"{icon}  {label}", key=f"nav_{i}", use_container_width=True,
+                     type="primary" if i==cur else "secondary"):
             st.session_state.step = i; st.rerun()
 st.divider()
 
@@ -606,9 +612,10 @@ if show_tab3:
                 st.session_state["_w_ver"] = st.session_state.get("_w_ver",0)+1  # nueva versión de campos
                 for x in ["mc","stress"]:
                     if x in st.session_state: del st.session_state[x]
-            st.success("Las expectativas de retorno se calcularon automáticamente combinando "
-                       "dos señales: el momentum de los últimos 12 meses y la baja volatilidad "
-                       "de cada activo. Cualquier cambio en activos o perfil actualiza todo al instante.")
+            st.markdown("### 📊 Tu cartera está lista")
+            st.success("✨ Calculamos automáticamente las mejores proporciones para tu cartera, "
+                       "según tu perfil de riesgo y el comportamiento reciente de cada inversión. "
+                       "Puedes ajustar los porcentajes abajo si quieres — todo se actualiza al instante.")
         else:
             # Modo manual: recalcula solo cuando cambian activos, perfil o views.
             def _views_key(vs):
@@ -693,7 +700,7 @@ if show_tab3:
                 fig=go.Figure(go.Pie(labels=[disp(a) for a in ws.index.tolist()],values=ws.values.tolist(),
                     marker_colors=colors,hole=.4,textinfo="label+percent"))
                 fig.update_layout(height=280,margin=dict(l=0,r=0,t=5,b=0),showlegend=False)
-                st.plotly_chart(fig,use_container_width=True,key="chart_pie_activo")
+                st.plotly_chart(fig,use_container_width=True,key="chart_pie_activo",config={"displayModeBar":False})
             with g2:
                 st.caption("Por sector")
                 sec=st.session_state.sectors
@@ -714,7 +721,7 @@ if show_tab3:
                     fig=go.Figure(go.Pie(labels=list(sw.keys()),values=list(sw.values()),
                         marker_colors=sec_colors,hole=.4,textinfo="label+percent"))
                     fig.update_layout(height=280,margin=dict(l=0,r=0,t=5,b=0),showlegend=False)
-                    st.plotly_chart(fig,use_container_width=True,key="chart_pie_sector")
+                    st.plotly_chart(fig,use_container_width=True,key="chart_pie_sector",config={"displayModeBar":False})
                 else:
                     st.caption("ℹ️ No hay información de sectores disponible para estos activos "
                                "(por ejemplo, si son solo instrumentos de renta fija).")
@@ -760,7 +767,7 @@ if show_tab3:
             fig.update_yaxes(tickformat=".0%",row=2,col=1)
             fig.update_layout(height=520,margin=dict(l=0,r=0,t=25,b=0),
                              legend=dict(orientation="h",y=-0.08,font=dict(size=10)))
-            st.plotly_chart(fig,use_container_width=True,key="chart_evol_hist")
+            st.plotly_chart(fig,use_container_width=True,key="chart_evol_hist",config={"displayModeBar":False})
 
             # Métricas históricas del rango visible
             ann_r=np.exp(pr.mean()*PPY)-1; ann_v=pr.std(ddof=1)*np.sqrt(PPY)
@@ -838,14 +845,14 @@ if show_tab3:
                         marker_color=bar_colors, text=[f"{r['ret']:.1%}" for _,r,_ in rows],
                         textposition="outside"))
                     fr.update_yaxes(tickformat=".0%"); fr.update_layout(height=260,margin=dict(l=0,r=0,t=5,b=0))
-                    st.plotly_chart(fr,use_container_width=True,key="chart_bench_ret")
+                    st.plotly_chart(fr,use_container_width=True,key="chart_bench_ret",config={"displayModeBar":False})
                 with cbar2:
                     st.caption("Sharpe (retorno ajustado por riesgo)")
                     fs = go.Figure(go.Bar(x=names, y=[r['sharpe'] for _,r,_ in rows],
                         marker_color=bar_colors, text=[f"{r['sharpe']:.2f}" for _,r,_ in rows],
                         textposition="outside"))
                     fs.update_layout(height=260,margin=dict(l=0,r=0,t=5,b=0))
-                    st.plotly_chart(fs,use_container_width=True,key="chart_bench_sharpe")
+                    st.plotly_chart(fs,use_container_width=True,key="chart_bench_sharpe",config={"displayModeBar":False})
 
                 # Lectura automática
                 best_sh = max(rows, key=lambda x: (x[1]['sharpe'] if np.isfinite(x[1]['sharpe']) else -99))
@@ -892,7 +899,7 @@ if show_tab3:
                     figy.update_yaxes(tickformat=".0%")
                     figy.update_layout(barmode="group",height=320,margin=dict(l=0,r=0,t=5,b=0),
                                        legend=dict(orientation="h",y=1.12,font=dict(size=10)))
-                    st.plotly_chart(figy,use_container_width=True,key="chart_yearly_bench")
+                    st.plotly_chart(figy,use_container_width=True,key="chart_yearly_bench",config={"displayModeBar":False})
             else:
                 st.caption("Agrega uno o más benchmarks en la pestaña **Activos** para ver la comparación.")
 
@@ -905,8 +912,12 @@ if show_tab3:
 
 # ═══════════════════ TAB 4 ════════════════════════════════════════════════════
 if show_tab4:
-    if not(st.session_state.optimized and st.session_state.result): st.info("⬅️ Optimiza primero.")
+    if not(st.session_state.optimized and st.session_state.result):
+        st.info("⬅️ Primero define tu cartera en el paso anterior para ver la proyección.")
     else:
+        st.markdown("### 🔮 ¿Cómo podría crecer tu inversión?")
+        st.write("Aquí simulamos miles de futuros posibles para tu cartera y te mostramos el rango "
+                 "de resultados que podrías esperar. Ajusta los años y la meta abajo.")
         res=st.session_state.result
         wnorm=st.session_state.manual_weights if st.session_state.manual_weights is not None else res.weights
 
@@ -988,7 +999,7 @@ if show_tab4:
             fig1.update_yaxes(tickprefix="$",tickformat=",.0f")
             fig1.update_layout(height=380,margin=dict(l=0,r=0,t=5,b=0),
                               legend=dict(orientation="h",y=-0.12))
-            st.plotly_chart(fig1,use_container_width=True,key="chart_mc_bands")
+            st.plotly_chart(fig1,use_container_width=True,key="chart_mc_bands",config={"displayModeBar":False})
 
             # Interpretación MC
             st.info(
@@ -1033,7 +1044,7 @@ if show_tab4:
             fig2.update_yaxes(tickprefix="$",tickformat=",.0f")
             fig2.update_layout(height=420,margin=dict(l=0,r=0,t=5,b=0),
                               legend=dict(orientation="h",y=-0.12))
-            st.plotly_chart(fig2,use_container_width=True,key="chart_mc_gbm")
+            st.plotly_chart(fig2,use_container_width=True,key="chart_mc_gbm",config={"displayModeBar":False})
 
             # Interpretación GBM
             st.info(
@@ -1141,7 +1152,7 @@ conjunto de futuros posibles."""
                 fig.update_yaxes(tickformat=".1%")
                 fig.update_layout(barmode="group",height=340,margin=dict(l=0,r=0,t=5,b=0),
                                   legend=dict(orientation="h",y=1.12,font=dict(size=10)))
-                st.plotly_chart(fig,use_container_width=True,key="chart_stress_bar")
+                st.plotly_chart(fig,use_container_width=True,key="chart_stress_bar",config={"displayModeBar":False})
                 st.markdown("##### Detalle de cada crisis")
                 for s in avail:
                     ic="🔴" if s.port_return<0 else "🟢"; diff=s.port_return-s.benchmark_return
