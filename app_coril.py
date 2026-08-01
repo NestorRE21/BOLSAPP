@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Coril SAB — Optimizador BL v7 — Compacto"""
+"""Coril SAB · Optimizador BL v7 · Compacto"""
 import numpy as np, pandas as pd, streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -30,6 +30,26 @@ def detectar_perfil(rv_pct):
     if rv_pct <= 80:   return "Agresivo", "Alta exposición a renta variable."
     return "Muy agresivo", "Máxima exposición a renta variable."
 EJ = ["AAPL","MSFT","NVDA","JNJ","KO","QQQ"]
+
+# Catálogo de inversiones populares con nombres amigables (para quien no conoce tickers)
+POPULARES_RV = [
+    ("AAPL","Apple","📱"),("MSFT","Microsoft","💻"),("GOOGL","Google","🔎"),
+    ("AMZN","Amazon","📦"),("NVDA","Nvidia","🎮"),("META","Meta (Facebook)","👥"),
+    ("TSLA","Tesla","🚗"),("KO","Coca-Cola","🥤"),("MCD","McDonald's","🍔"),
+    ("DIS","Disney","🎬"),("NFLX","Netflix","🎥"),("V","Visa","💳"),
+    ("JNJ","Johnson & Johnson","💊"),("JPM","JPMorgan","🏦"),
+    ("QQQ","Tecnológicas EE.UU. (QQQ)","📈"),("SPY","S&P 500 (SPY)","🇺🇸"),
+    ("VTI","Todo el mercado EE.UU. (VTI)","🌐"),
+]
+POPULARES_RF = [
+    ("AGG","Bonos EE.UU. amplio (AGG)","🏛️"),("BND","Bonos totales (BND)","🏦"),
+    ("TLT","Bonos largo plazo (TLT)","📉"),("SHY","Bonos corto plazo (SHY)","🛡️"),
+    ("LQD","Bonos corporativos (LQD)","🏢"),("TIP","Bonos anti-inflación (TIP)","📊"),
+]
+POPULARES_BK = [
+    ("^GSPC","S&P 500 (EE.UU.)","🇺🇸"),("^IXIC","Nasdaq (tecnología)","💻"),
+    ("^DJI","Dow Jones","🏭"),("ACWI","Mundo (ACWI)","🌍"),
+]
 C_RV,C_RF,C_OPT = "#2E5E8C","#2CA02C","#D6604D"
 BC = ["#888","#E377C2","#FF7F0E","#9467BD","#17BECF"]
 
@@ -231,7 +251,7 @@ def filter_search(results, category):
     elif category == "🟢 Renta fija":
         # RF: solo lo que positivamente parece RF, nunca apalancados.
         return [r for r in results if _is_rf_candidate(r)]
-    else:  # Benchmark — permite apalancados; solo bloquea cripto/commodities.
+    else:  # Benchmark · permite apalancados; solo bloquea cripto/commodities.
         return [r for r in results if not _is_excluded(r)]
 
 def do_opt(eq_tickers, rf_tickers, include_fico, views_cfg, eq_t, fi_t, pb, auto=False):
@@ -376,7 +396,7 @@ if st.session_state.mode is None:
         if st.button("Usar modo Manual", type="primary", use_container_width=True):
             st.session_state.mode="manual"; st.rerun()
     st.write("")
-    st.info("💡 Podrás cambiar de modo en cualquier momento. Nada es definitivo — "
+    st.info("💡 Podrás cambiar de modo en cualquier momento. Nada es definitivo, "
             "es un simulador para explorar con tranquilidad.")
     st.stop()
 
@@ -436,17 +456,17 @@ if show_tab1:
     st.markdown("### 📥 Paso 1: Elige en qué invertir")
     st.write("Busca empresas o fondos y agrégalos a tu cartera. Si no sabes por dónde empezar, "
              "usa el botón **Cargar ejemplo** más abajo.")
-    with st.expander("❓ No sé qué es renta variable ni renta fija — explícamelo"):
+    with st.expander("❓ No sé qué es renta variable ni renta fija: explícamelo"):
         st.markdown(
-            """**Renta variable** 🔵 — Son inversiones que pueden subir o bajar bastante de valor,
+            """**Renta variable** 🔵 : inversiones que pueden subir o bajar bastante de valor,
 como las **acciones** de empresas (Apple, Microsoft) o fondos que las agrupan (ETFs).
 Ofrecen más ganancia potencial, pero también más riesgo.
 
-**Renta fija** 🟢 — Son inversiones más estables y predecibles, como los **bonos** o los
+**Renta fija** 🟢 : inversiones más estables y predecibles, como los **bonos** o los
 **fondos de inversión** de deuda. Ganan menos, pero son más seguras. Sirven para dar
 estabilidad a tu cartera.
 
-**Benchmark** 📊 — Es un punto de referencia para comparar. Por ejemplo, el índice
+**Benchmark** 📊 : un punto de referencia para comparar. Por ejemplo, el índice
 **S&P 500** (^GSPC) representa a las 500 empresas más grandes de EE.UU. Sirve para saber
 si tu cartera lo hace mejor o peor que "el mercado".
 
@@ -457,7 +477,8 @@ depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
     with col_t: add_to=st.radio("Añadir como",["🔵 Renta variable","🟢 Renta fija","📊 Benchmark"],
                                 help="Elige el tipo de inversión antes de buscar. "
                                      "Las sugerencias se filtran según lo que elijas.")
-    with col_s: q=st.text_input("🔍 Buscar (escribe el nombre y presiona Enter)",placeholder="Apple, TLT, SHY, AGG, ^GSPC…")
+    with col_s: q=st.text_input("🔍 Buscar por nombre (escribe y presiona Enter)",
+                                placeholder="Escribe el nombre de una empresa: Apple, Microsoft, Coca-Cola…")
     if q.strip():
         raw_res=search_yf(q.strip())
         res=filter_search(raw_res, add_to)
@@ -465,10 +486,11 @@ depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
             st.caption(f"ℹ️ No se encontraron resultados compatibles con **{add_to}**. "
                        f"Se encontraron {len(raw_res)} de otra clase.")
         if res:
+            st.caption("Resultados de la búsqueda (pulsa para agregar):")
             cols=st.columns(min(len(res[:6]),3))
             for i,r in enumerate(res[:6]):
                 with cols[i%len(cols)]:
-                    if st.button(f"➕ {r['tk']} — {r['nm'][:18]}",key=f"a_{r['tk']}",use_container_width=True):
+                    if st.button(f"➕ {r['tk']}  ·  {r['nm'][:22]}",key=f"a_{r['tk']}",use_container_width=True):
                         tk=r['tk']
                         if add_to=="🔵 Renta variable":
                             if tk not in st.session_state.tickers: st.session_state.tickers.append(tk); st.toast(f"✓ {tk} → RV")
@@ -476,7 +498,26 @@ depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
                             if tk not in st.session_state.rf_tickers: st.session_state.rf_tickers.append(tk); st.toast(f"✓ {tk} → RF")
                         else:
                             if tk not in st.session_state.benchmarks: st.session_state.benchmarks.append(tk); st.toast(f"✓ {tk} → Benchmark")
-    if not st.session_state.tickers:
+
+    # ── Inversiones populares (un clic, sin conocer tickers) ──────────────
+    with st.expander("⭐ ¿No sabes qué agregar? Elige de las inversiones más populares", expanded=not st.session_state.tickers):
+        if add_to=="🔵 Renta variable":
+            _pop=POPULARES_RV; _dest="tickers"; _lbl="RV"
+        elif add_to=="🟢 Renta fija":
+            _pop=POPULARES_RF; _dest="rf_tickers"; _lbl="RF"
+        else:
+            _pop=POPULARES_BK; _dest="benchmarks"; _lbl="Benchmark"
+        st.caption(f"Mostrando opciones de **{add_to}**. Pulsa cualquiera para agregarla. "
+                   "Cambia el tipo arriba a la derecha para ver otras.")
+        pop_cols=st.columns(3)
+        for i,(tk,nombre,emo) in enumerate(_pop):
+            with pop_cols[i%3]:
+                ya = tk in st.session_state.get(_dest,[])
+                if st.button(f"{emo} {nombre}"+(" ✓" if ya else ""),
+                             key=f"pop_{_dest}_{tk}",use_container_width=True,disabled=ya):
+                    st.session_state[_dest].append(tk); st.toast(f"✓ {nombre} agregado"); st.rerun()
+
+    if not st.session_state.tickers and not st.session_state.rf_tickers:
         st.info("👇 ¿Primera vez? Pulsa aquí para cargar una cartera de ejemplo con empresas conocidas "
                 "(Apple, Microsoft, Nvidia…) y explorar cómo funciona.")
         if st.button("🚀 Cargar ejemplo",type="primary"):
@@ -615,7 +656,7 @@ if show_tab3:
             st.markdown("### 📊 Tu cartera está lista")
             st.success("✨ Calculamos automáticamente las mejores proporciones para tu cartera, "
                        "según tu perfil de riesgo y el comportamiento reciente de cada inversión. "
-                       "Puedes ajustar los porcentajes abajo si quieres — todo se actualiza al instante.")
+                       "Puedes ajustar los porcentajes abajo si quieres · todo se actualiza al instante.")
         else:
             # Modo manual: recalcula solo cuando cambian activos, perfil o views.
             def _views_key(vs):
@@ -748,7 +789,7 @@ if show_tab3:
                 bdd[n] = bw[n] / bw[n].cummax() - 1
 
             fig=make_subplots(rows=2,cols=1,shared_xaxes=True,row_heights=[.65,.35],vertical_spacing=.04,
-                             subplot_titles=[f"Evolución de capital · últimos {cy} años (${capital:,.0f})","Drawdown"])
+                             subplot_titles=[f"Evolución de capital, últimos {cy} años (${capital:,.0f})","Drawdown"])
             fig.add_trace(go.Scatter(x=wl.index,y=wl.values,name="Portafolio",
                                     line=dict(color=C_RV,width=2.5)),row=1,col=1)
             for i,(n,v) in enumerate(bw.items()):
@@ -953,7 +994,7 @@ if show_tab4:
         st.divider()
 
         # MONTE CARLO (detalle)
-        st.subheader("🎲 ¿Cuánto podría valer el portafolio? — Detalle")
+        st.subheader("🎲 ¿Cuánto podría valer el portafolio? (detalle)")
         if "mc" in st.session_state and st.session_state["mc"]:
             mc=st.session_state["mc"]; gain=mc.median_path[-1]-mc.capital
             c1,c2,c3=st.columns(3)
@@ -978,7 +1019,7 @@ if show_tab4:
             gbm_max = terminal[idx_best]
 
             # ── GRÁFICO 1: Monte Carlo — bandas de percentiles ───────────
-            st.markdown("#### 📊 Distribución de resultados — Bandas de confianza")
+            st.markdown("#### 📊 Distribución de resultados: bandas de confianza")
             st.caption("Este gráfico resume el **rango probable** de tu inversión. "
                        "Las bandas muestran dónde caería tu capital en el 50%, 80% y 90% de los escenarios simulados. "
                        "La línea central (mediana) es el resultado más representativo.")
@@ -1013,7 +1054,7 @@ if show_tab4:
             )
 
             # ── GRÁFICO 2: GBM — trayectorias individuales ───────────────
-            st.markdown("#### 🔀 Trayectorias individuales — Movimiento Browniano Geométrico")
+            st.markdown("#### 🔀 Caminos posibles de tu inversión")
             st.caption("Mientras el gráfico anterior resume los rangos, este muestra **caminos concretos** "
                        "que podría seguir tu inversión semana a semana. Cada línea gris es un escenario posible.")
             n_show = st.slider("Trayectorias a mostrar",10,200,50,10,
@@ -1072,7 +1113,7 @@ construida con el retorno esperado (μ) y la matriz de covarianza (Σ) del model
 Al acumularlos y aplicarles la exponencial, se obtiene cada una de las líneas grises del gráfico.
 
 **Importante:** los dos gráficos de esta sección (las bandas y las trayectorias) beben de las
-**mismas** simulaciones GBM. No son dos modelos distintos — son dos formas de mirar el mismo
+**mismas** simulaciones GBM. No son dos modelos distintos · son dos formas de mirar el mismo
 conjunto de futuros posibles."""
                 )
 
@@ -1157,7 +1198,7 @@ conjunto de futuros posibles."""
                 for s in avail:
                     ic="🔴" if s.port_return<0 else "🟢"; diff=s.port_return-s.benchmark_return
                     cA,cB=st.columns([3,1])
-                    with cA: st.markdown(f"{ic} **{s.name}** · {s.start} → {s.end}"); st.caption(s.description)
+                    with cA: st.markdown(f"{ic} **{s.name}**  ({s.start} a {s.end})"); st.caption(s.description)
                     with cB: st.metric("Impacto en tu capital",f"{s.port_return:+.1%}",delta=usd(s.port_loss),delta_color="off")
                     peor_activo=""
                     if not s.asset_returns.empty:
