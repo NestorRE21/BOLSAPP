@@ -9,7 +9,12 @@ from projections import monte_carlo, stress_test, CRISIS_PERIODS
 st.set_page_config(page_title="Coril · Portafolios", page_icon="📈", layout="wide")
 RF,PPY = 0.02,52
 FICO_TK = "FICCMP13"
+FICO_DISPLAY = "FICO"
 FICO = ForcedAsset(ret_annual=0.0625,vol_annual=0.010,beta=0.30,sector="Factoring",region="Perú",moneda="USD",instrumento="Fondo")
+
+def disp(ticker):
+    """Nombre visible de un ticker (FICCMP13 → FICO). Para uso en la interfaz."""
+    return FICO_DISPLAY if ticker == FICO_TK else ticker
 PERFILES = {"Conservador (30/70)":(0.30,0.70),"Moderado-bajo (40/60)":(0.40,0.60),
             "Moderado (50/50)":(0.50,0.50),"Crecimiento (60/40)":(0.60,0.40),"Agresivo (70/30)":(0.70,0.30)}
 P_DESC = {"Conservador (30/70)":"Preservar capital.","Moderado-bajo (40/60)":"Leve crecimiento.",
@@ -114,31 +119,36 @@ _RF_TICKERS = {"TLT","SHY","IEF","AGG","BND","LQD","HYG","TIP","BIL","SHV",
                "FLRN","SRLN","BKLN","HYDB","ANGL","SJNK","JNK","SHYG","USHY",
                "LMBS","VMBS","GNMA","FBND","NUBD","TOTL","GTO","FIXD","BOND"}
 
-# Keywords que EXCLUYEN — productos apalancados, inversos, cripto, commodities
-_EXCLUDE_KW = {"leverag","2x","3x","-2x","-3x","ultra","direxion","proshares ultra",
-               "inverse","short","bear","bull 2x","bull 3x",
-               "bitcoin","ethereum","crypto","blockchain","digital asset",
+# Keywords de exclusión DURA — cripto, commodities (bloqueados en todos lados)
+_EXCLUDE_KW = {"bitcoin","ethereum","crypto","blockchain","digital asset",
                "gold","silver","platinum","palladium","oil","crude","natural gas",
                "commodity","commodit","agricult","wheat","corn","soybean",
-               "cannabis","marijuana","weed",
-               "option","volatil","vix","futures","swap"}
+               "cannabis","marijuana","weed"}
+
+# Keywords y tickers de productos APALANCADOS / INVERSOS.
+# Permitidos en Renta Variable y Benchmark; NO en Renta Fija.
+_LEV_KW = {"leverag","2x","3x","-2x","-3x","ultra","direxion","proshares ultra",
+           "inverse","bull 2x","bull 3x","bear 2x","bear 3x"}
+_LEV_TICKERS = {"TQQQ","SQQQ","UPRO","SPXU","QLD","QID","SSO","SDS","UDOW","SDOW",
+                "TNA","TZA","LABU","LABD","SOXL","SOXS","FNGU","FNGD","JNUG","JDST",
+                "NUGT","DUST","UVXY","SVXY","VIXY","TMF","TMV","TYD","TYO"}
 
 def _is_excluded(r):
-    """Excluye productos apalancados, inversos, cripto, commodities."""
+    """Exclusión dura: cripto, commodities. Bloqueado en todas las categorías."""
+    nm = (r.get("nm","") or "").lower()
+    return any(kw in nm for kw in _EXCLUDE_KW)
+
+def _is_leveraged(r):
+    """¿Es un producto apalancado o inverso?"""
     nm = (r.get("nm","") or "").lower()
     tk = (r.get("tk","") or "").upper()
-    # Excluir por nombre
-    if any(kw in nm for kw in _EXCLUDE_KW): return True
-    # Excluir tickers que empiezan con patrones de apalancados (TQQQ, SQQQ, UPRO, SPXU, etc.)
-    lev_prefixes = ("TQQQ","SQQQ","UPRO","SPXU","QLD","QID","SSO","SDS","UDOW","SDOW",
-                    "TNA","TZA","LABU","LABD","SOXL","SOXS","FNGU","FNGD","JNUG","JDST",
-                    "NUGT","DUST","UVXY","SVXY","VIXY")
-    if tk in lev_prefixes: return True
+    if tk in _LEV_TICKERS: return True
+    if any(kw in nm for kw in _LEV_KW): return True
     return False
 
 def _is_rf_candidate(r):
-    """Heurística: ¿el resultado parece renta fija?"""
-    if _is_excluded(r): return False
+    """Heurística: ¿el resultado parece renta fija? (nunca apalancados)"""
+    if _is_excluded(r) or _is_leveraged(r): return False   # RF nunca apalancado
     nm = (r.get("nm","") or "").lower()
     tk = (r.get("tk","") or "").upper()
     # Ticker conocido de RF
@@ -148,9 +158,11 @@ def _is_rf_candidate(r):
     return False
 
 def _is_rv_candidate(r):
-    """Heurística: ¿el resultado parece renta variable?"""
-    if _is_excluded(r): return False
+    """Heurística: ¿el resultado parece renta variable? (apalancados sí permitidos)"""
+    if _is_excluded(r): return False       # cripto/commodities no
     tp = r.get("tp","")
+    # Apalancados de equity → sí van en RV
+    if _is_leveraged(r): return True
     # Acciones individuales → siempre RV
     if tp == "EQUITY": return True
     # ETFs/fondos → solo si NO parece RF
@@ -163,11 +175,12 @@ def _is_rv_candidate(r):
 def filter_search(results, category):
     """Filtra resultados de búsqueda según la categoría seleccionada."""
     if category == "🔵 Renta variable":
+        # RV: acciones, ETFs de equity y apalancados. No cripto/commodities.
         return [r for r in results if _is_rv_candidate(r)]
     elif category == "🟢 Renta fija":
-        # Solo mostrar lo que positivamente parece RF (no todo lo que no sea RV)
+        # RF: solo lo que positivamente parece RF, nunca apalancados.
         return [r for r in results if _is_rf_candidate(r)]
-    else:  # Benchmark — no filtrar, pero sí excluir basura
+    else:  # Benchmark — permite apalancados; solo bloquea cripto/commodities.
         return [r for r in results if not _is_excluded(r)]
 
 def do_opt(eq_tickers, rf_tickers, include_fico, views_cfg, eq_t, fi_t, pb, auto=False):
@@ -262,7 +275,7 @@ with st.sidebar:
                              help="Solo afecta la vista del gráfico histórico. La optimización siempre usa 15 años.")
     with st.expander("⚙️ Avanzado"):
         _p=RiskProfile.for_split(eq_t,fi_t)
-        st.caption(f"RF: {FICO_TK} · {FICO.ret_annual:.2%} | Beta: {_p.beta_min:.2f}–{_p.beta_max:.2f} | DD máx: {_p.max_drawdown:.0%}")
+        st.caption(f"RF: {FICO_DISPLAY} · {FICO.ret_annual:.2%} | Beta: {_p.beta_min:.2f}–{_p.beta_max:.2f} | DD máx: {_p.max_drawdown:.0%}")
         st.caption("Optimización siempre usa **15 años** de datos.")
         if st.button("🗑️ Limpiar caché",use_container_width=True): st.cache_data.clear(); st.toast("✓")
 
@@ -387,7 +400,7 @@ if show_tab1:
         include_fico = st.checkbox("Incluir FICO Coril (6.25%)", value=True, key="fico_toggle")
         st.session_state.include_fico = include_fico
         if include_fico:
-            st.caption(f"✓ {FICO_TK} · {FICO.ret_annual:.2%} forzado")
+            st.caption(f"✓ {FICO_DISPLAY} · {FICO.ret_annual:.2%} forzado")
         for i,t in enumerate(st.session_state.rf_tickers):
             c1,c2=st.columns([5,1]); c1.write(t)
             if c2.button("✕",key=f"rrf{i}"): st.session_state.rf_tickers.pop(i)
@@ -521,11 +534,11 @@ if show_tab3:
             with col_a:
                 for a in assets[:mid]:
                     ic="🟢" if a==FICO_TK else "🔵"
-                    nw[a]=st.number_input(f"{ic} {a}",0.0,100.0,round(float(res.weights[a])*100,1),0.5,"%.1f",key=f"s_{a}")
+                    nw[a]=st.number_input(f"{ic} {disp(a)}",0.0,100.0,round(float(res.weights[a])*100,1),0.5,"%.1f",key=f"s_{a}")
             with col_b:
                 for a in assets[mid:]:
                     ic="🟢" if a==FICO_TK else "🔵"
-                    nw[a]=st.number_input(f"{ic} {a}",0.0,100.0,round(float(res.weights[a])*100,1),0.5,"%.1f",key=f"s_{a}")
+                    nw[a]=st.number_input(f"{ic} {disp(a)}",0.0,100.0,round(float(res.weights[a])*100,1),0.5,"%.1f",key=f"s_{a}")
             wn=pd.Series(nw); tot=wn.sum(); wnorm=wn/tot if tot>0 else wn/100; st.session_state.manual_weights=wnorm
             eqw=float(wnorm[[a for a in wnorm.index if a!=FICO_TK]].sum()); fiw=float(wnorm.get(FICO_TK,0))
             with col_r:
@@ -561,7 +574,7 @@ if show_tab3:
 
                 ws=wnorm[wnorm>1e-4]
                 colors=px.colors.qualitative.Set2[:len(ws)]
-                fig=go.Figure(go.Pie(labels=ws.index.tolist(),values=ws.values.tolist(),
+                fig=go.Figure(go.Pie(labels=[disp(a) for a in ws.index.tolist()],values=ws.values.tolist(),
                     marker_colors=colors,hole=.4,textinfo="label+percent"))
                 fig.update_layout(height=280,margin=dict(l=0,r=0,t=5,b=0),showlegend=False)
                 st.plotly_chart(fig,use_container_width=True)
@@ -907,8 +920,9 @@ conjunto de futuros posibles."""
         ret_st=st.session_state.returns_full if st.session_state.returns_full is not None else st.session_state.returns
         bench_st=st.session_state.bench_full if st.session_state.bench_full is not None else (st.session_state.bench_rets if isinstance(st.session_state.bench_rets,dict) else {})
         if ret_st is not None: st.caption(f"📅 Datos disponibles: {ret_st.index.min().strftime('%Y-%m-%d')} → {ret_st.index.max().strftime('%Y-%m-%d')}")
-        # Stress automático: recalcula si cambian los pesos
-        stress_sig=(round(float(wnorm.sum()),6),tuple(round(float(x),6) for x in wnorm.values),round(float(capital),2))
+        # Stress automático: recalcula si cambian los pesos o el set de benchmarks
+        _bench_keys = tuple(sorted(bench_st.keys())) if isinstance(bench_st,dict) else ()
+        stress_sig=(round(float(wnorm.sum()),6),tuple(round(float(x),6) for x in wnorm.values),round(float(capital),2),_bench_keys)
         if st.session_state.get("_stress_sig")!=stress_sig or "stress" not in st.session_state:
             pb=list(bench_st.values())[0] if bench_st else None
             with st.spinner("Evaluando crisis históricas…"):
@@ -918,16 +932,37 @@ conjunto de futuros posibles."""
             stres=st.session_state["stress"]; avail=[s for s in stres if s.available]
             if not avail: st.warning("No hay datos suficientes para evaluar crisis. Agrega más historia de datos.")
             else:
-                worst=min(avail,key=lambda s:s.port_return); beats=sum(1 for s in avail if s.port_return>s.benchmark_return)
-                st.info(f"**Resumen:** de {len(avail)} crisis evaluadas, tu portafolio se comportó mejor que el "
-                        f"mercado (benchmark) en **{beats}**. La crisis que más te habría afectado es "
+                # Retorno de CADA benchmark en cada crisis (para múltiples barras)
+                def _bench_crisis_return(bser, crisis):
+                    m=(bser.index>=crisis.start)&(bser.index<=crisis.end)
+                    seg=bser.loc[m].dropna()
+                    return float(np.exp(seg.sum())-1) if len(seg)>0 else None
+                # Mapa: nombre_benchmark -> {crisis_name: retorno}
+                bench_returns={}
+                if isinstance(bench_st,dict):
+                    for bn,bser in bench_st.items():
+                        bench_returns[bn]={s.name:_bench_crisis_return(bser,
+                            next(c for c in CRISIS_PERIODS if c.name==s.name)) for s in avail}
+
+                worst=min(avail,key=lambda s:s.port_return)
+                # ¿A cuántos benchmarks les ganó el portafolio en promedio?
+                beats=sum(1 for s in avail if s.port_return>s.benchmark_return)
+                st.info(f"**Resumen:** de {len(avail)} crisis evaluadas, tu portafolio resistió mejor que el "
+                        f"benchmark principal en **{beats}**. La crisis que más te habría afectado es "
                         f"**{worst.name}**, con un impacto de **{worst.port_return:+.1%}** sobre tu capital.")
-                st.caption("Barras rojas: tu portafolio. Barras grises: el mercado de referencia. "
-                           "Mientras más arriba (o menos abajo) esté la barra roja, mejor resististe.")
+                st.caption("La barra de color es tu portafolio. Las demás barras son los benchmarks elegidos. "
+                           "Mientras más arriba (o menos abajo) esté una barra, mejor resistió esa crisis.")
                 fig=go.Figure()
-                fig.add_trace(go.Bar(x=[s.name for s in avail],y=[s.port_return for s in avail],name="Tu portafolio",marker_color=C_OPT))
-                fig.add_trace(go.Bar(x=[s.name for s in avail],y=[s.benchmark_return for s in avail],name="Mercado (benchmark)",marker_color="#888"))
-                fig.update_yaxes(tickformat=".1%"); fig.update_layout(barmode="group",height=300,margin=dict(l=0,r=0,t=5,b=0),legend=dict(orientation="h",y=1.08))
+                names=[s.name for s in avail]
+                fig.add_trace(go.Bar(x=names,y=[s.port_return for s in avail],
+                                     name="📊 Tu portafolio",marker_color=C_OPT))
+                for i,(bn,bmap) in enumerate(bench_returns.items()):
+                    fig.add_trace(go.Bar(x=names,
+                        y=[bmap.get(nm) for nm in names],
+                        name=bn,marker_color=BC[i%len(BC)]))
+                fig.update_yaxes(tickformat=".1%")
+                fig.update_layout(barmode="group",height=340,margin=dict(l=0,r=0,t=5,b=0),
+                                  legend=dict(orientation="h",y=1.12,font=dict(size=10)))
                 st.plotly_chart(fig,use_container_width=True)
                 st.markdown("##### Detalle de cada crisis")
                 for s in avail:
@@ -938,7 +973,7 @@ conjunto de futuros posibles."""
                     peor_activo=""
                     if not s.asset_returns.empty:
                         pa=s.asset_returns.sort_values()
-                        peor_activo=f" El activo que más cayó fue **{pa.index[0]}** ({pa.iloc[0]:+.1%})."
+                        peor_activo=f" El activo que más cayó fue **{disp(pa.index[0])}** ({pa.iloc[0]:+.1%})."
                     comparativa=("Te fue **mejor** que el mercado" if diff>0 else "Te fue **peor** que el mercado")
                     st.caption(f"{comparativa} por {abs(diff):.1%}. "
                                f"Caída máxima durante el episodio: {s.max_drawdown:.1%}.{peor_activo}")
