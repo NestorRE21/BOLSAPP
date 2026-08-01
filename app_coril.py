@@ -7,6 +7,106 @@ from optimizer import RiskProfile, ForcedAsset, View, BLConfig, run_profile, GKC
 from projections import monte_carlo, stress_test, CRISIS_PERIODS
 
 st.set_page_config(page_title="Simulador de inversiones · Coril SAB", page_icon="📈", layout="wide")
+
+# ═══════════════════ ESTILO VISUAL PERSONALIZADO ══════════════════════════════
+st.markdown("""
+<style>
+/* Importar tipografía moderna */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+html, body, [class*="css"], .stMarkdown, .stButton, .stMetric {
+    font-family: 'Inter', -apple-system, sans-serif;
+}
+
+/* Fondo general con degradado muy sutil */
+.stApp {
+    background: linear-gradient(180deg, #f7f9fc 0%, #eef2f8 100%);
+}
+
+/* Títulos principales con color de marca */
+h1 {
+    color: #1a3a5c !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.5px;
+}
+h2, h3 { color: #23405f !important; font-weight: 700 !important; }
+h4, h5 { color: #2e5e8c !important; font-weight: 600 !important; }
+
+/* Botones: gradiente de marca, redondeados, con elevación */
+.stButton > button {
+    border-radius: 12px !important;
+    font-weight: 600 !important;
+    border: none !important;
+    transition: all 0.18s ease !important;
+    padding: 0.55rem 1rem !important;
+}
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #2e5e8c 0%, #3d7ab8 100%) !important;
+    color: white !important;
+    box-shadow: 0 4px 14px rgba(46,94,140,0.30) !important;
+}
+.stButton > button[kind="primary"]:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 6px 20px rgba(46,94,140,0.42) !important;
+}
+.stButton > button[kind="secondary"] {
+    background: white !important;
+    color: #2e5e8c !important;
+    border: 1.5px solid #d4deea !important;
+}
+.stButton > button[kind="secondary"]:hover {
+    border-color: #2e5e8c !important;
+    background: #f4f8fc !important;
+}
+
+/* Tarjetas de métricas con fondo blanco, sombra y borde suave */
+[data-testid="stMetric"] {
+    background: white;
+    border: 1px solid #e6edf5;
+    border-radius: 14px;
+    padding: 16px 18px;
+    box-shadow: 0 2px 8px rgba(30,60,90,0.05);
+    transition: box-shadow 0.18s ease;
+}
+[data-testid="stMetric"]:hover {
+    box-shadow: 0 4px 16px rgba(30,60,90,0.10);
+}
+[data-testid="stMetricLabel"] { color: #64748b !important; font-weight: 500 !important; }
+[data-testid="stMetricValue"] { color: #1a3a5c !important; font-weight: 700 !important; }
+
+/* Cajas de info / success / warning más suaves y redondeadas */
+[data-testid="stNotification"], .stAlert {
+    border-radius: 12px !important;
+    border: none !important;
+    box-shadow: 0 2px 8px rgba(30,60,90,0.06);
+}
+
+/* Sidebar con fondo blanco limpio */
+[data-testid="stSidebar"] {
+    background: white;
+    border-right: 1px solid #e6edf5;
+}
+
+/* Inputs y selectores redondeados */
+.stTextInput input, .stNumberInput input, .stSelectbox > div > div {
+    border-radius: 10px !important;
+}
+
+/* Expanders como tarjetas */
+[data-testid="stExpander"] {
+    background: white;
+    border: 1px solid #e6edf5 !important;
+    border-radius: 12px !important;
+    box-shadow: 0 1px 4px rgba(30,60,90,0.04);
+}
+
+/* Divisores más sutiles */
+hr { border-color: #e6edf5 !important; }
+
+/* Radio buttons y checkboxes con acento de marca */
+.stRadio [data-baseweb="radio"] div[aria-checked="true"] { border-color: #2e5e8c !important; }
+</style>
+""", unsafe_allow_html=True)
 RF,PPY = 0.02,52
 FICO_TK = "FICCMP13"
 FICO_DISPLAY = "Fondo de inversión"
@@ -347,10 +447,17 @@ def run_dl(period):
 
 # ═══════════════════ SIDEBAR ══════════════════════════════════════════════════
 with st.sidebar:
-    st.title("📈 Coril")
+    st.markdown("""
+    <div style="display:flex; align-items:center; gap:8px; padding:6px 0 10px 0;">
+        <span style="font-size:1.6rem;">📈</span>
+        <div>
+            <div style="font-size:1.3rem; font-weight:800; color:#1a3a5c; line-height:1;">Coril</div>
+            <div style="font-size:0.72rem; color:#8595a8; font-weight:500;">Simulador de inversiones</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     if st.session_state.mode is None:
         # Pantalla de bienvenida: sidebar mínimo, sin configuración todavía.
-        st.caption("Simulador de inversiones")
         eq_t,fi_t,capital = 0.5,0.5,100_000   # defaults (no se usan hasta elegir modo)
     else:
         _mode_label = "🤖 Automático" if st.session_state.mode=="auto" else "🎛️ Manual"
@@ -386,34 +493,64 @@ OPT_PERIOD = "15y"
 
 # ═══════════════════ PANTALLA DE MODO ═════════════════════════════════════════
 if st.session_state.mode is None:
-    st.title("Simulador de inversiones – Coril SAB")
-    st.markdown("#### 👋 Bienvenido")
-    st.write("Esta herramienta te ayuda a **diseñar una cartera de inversión** y ver cómo "
-             "podría comportarse en el futuro, de forma sencilla y visual. "
-             "No necesitas experiencia previa.")
-    st.markdown("### ¿Cómo quieres empezar?")
+    # Hero de bienvenida
+    st.markdown("""
+    <div style="text-align:center; padding: 24px 0 8px 0;">
+        <div style="font-size:3.2rem; margin-bottom:4px;">📈</div>
+        <h1 style="font-size:2.6rem; margin:0; color:#1a3a5c;">Simulador de inversiones</h1>
+        <div style="font-size:1.1rem; color:#5a7290; font-weight:600; margin-top:2px;">Coril SAB</div>
+        <p style="font-size:1.05rem; color:#64748b; max-width:640px; margin:16px auto 0 auto; line-height:1.6;">
+            Diseña tu cartera de inversión y descubre cómo podría crecer tu dinero en el futuro.
+            <b style="color:#2e5e8c;">Sencillo, visual, y sin necesidad de experiencia previa.</b>
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
     st.write("")
-    cm1, cm2 = st.columns(2)
+    st.markdown("<h3 style='text-align:center; color:#23405f;'>¿Cómo quieres empezar?</h3>", unsafe_allow_html=True)
+    st.write("")
+    cm1, cmg, cm2 = st.columns([1,0.08,1])
     with cm1:
-        st.markdown("#### 🤖 Modo Automático")
-        st.caption("**Recomendado si estás empezando.** Tú solo eliges en qué invertir y "
-                   "cuánto riesgo aceptas; el sistema hace todos los cálculos por ti.")
-        st.markdown("- ✅ El sistema decide las mejores proporciones\n"
-                    "- ✅ Resultados y gráficos al instante\n"
-                    "- ✅ Perfecto para un primer análisis")
-        if st.button("Empezar con modo Automático", type="primary", use_container_width=True):
+        st.markdown("""
+        <div style="background:white; border:2px solid #cfe0f0; border-radius:18px; padding:22px 24px;
+                    box-shadow:0 4px 18px rgba(46,94,140,0.10); height:100%;">
+            <div style="display:inline-block; background:#e8f2fc; color:#2e5e8c; font-size:0.75rem;
+                        font-weight:700; padding:3px 10px; border-radius:20px; margin-bottom:10px;">
+                ⭐ RECOMENDADO PARA EMPEZAR</div>
+            <h3 style="margin:4px 0; color:#1a3a5c;">🤖 Modo Automático</h3>
+            <p style="color:#64748b; font-size:0.95rem; line-height:1.55; margin:8px 0 14px 0;">
+                Tú solo eliges en qué invertir y cuánto riesgo aceptas.
+                El sistema hace todos los cálculos por ti.</p>
+            <div style="color:#334155; font-size:0.92rem; line-height:1.9;">
+                ✅ El sistema decide las mejores proporciones<br>
+                ✅ Resultados y gráficos al instante<br>
+                ✅ Perfecto para un primer análisis</div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.write("")
+        if st.button("🚀 Empezar con modo Automático", type="primary", use_container_width=True):
             st.session_state.mode="auto"; st.rerun()
     with cm2:
-        st.markdown("#### 🎛️ Modo Manual")
-        st.caption("**Para usuarios con experiencia.** Tú defines tus propias expectativas de "
-                   "retorno para cada inversión y controlas todos los supuestos.")
-        st.markdown("- Ingresas tus propias expectativas\n"
-                    "- Ajustas el nivel de confianza de cada una\n"
-                    "- Ideal si ya tienes una idea de inversión")
-        if st.button("Usar modo Manual", type="primary", use_container_width=True):
+        st.markdown("""
+        <div style="background:white; border:1.5px solid #e6edf5; border-radius:18px; padding:22px 24px;
+                    box-shadow:0 2px 10px rgba(30,60,90,0.06); height:100%;">
+            <div style="display:inline-block; background:#f1f5f9; color:#64748b; font-size:0.75rem;
+                        font-weight:700; padding:3px 10px; border-radius:20px; margin-bottom:10px;">
+                🎓 CON EXPERIENCIA</div>
+            <h3 style="margin:4px 0; color:#1a3a5c;">🎛️ Modo Manual</h3>
+            <p style="color:#64748b; font-size:0.95rem; line-height:1.55; margin:8px 0 14px 0;">
+                Tú defines tus propias expectativas de retorno para cada
+                inversión y controlas todos los supuestos.</p>
+            <div style="color:#334155; font-size:0.92rem; line-height:1.9;">
+                • Ingresas tus propias expectativas<br>
+                • Ajustas el nivel de confianza de cada una<br>
+                • Ideal si ya tienes una idea de inversión</div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.write("")
+        if st.button("Usar modo Manual", type="secondary", use_container_width=True):
             st.session_state.mode="manual"; st.rerun()
     st.write("")
-    st.info("💡 Podrás cambiar de modo en cualquier momento. Nada es definitivo, "
+    st.info("💡 Podrás cambiar de modo cuando quieras. Nada es definitivo: "
             "es un simulador para explorar con tranquilidad.")
     st.stop()
 
@@ -424,7 +561,13 @@ if st.session_state.tickers and st.session_state.benchmarks and st.session_state
     with st.spinner("Actualizando datos (15y)…"): run_dl(OPT_PERIOD)
 
 # ═══════════════════ MAIN ═════════════════════════════════════════════════════
-st.title("Simulador de inversiones – Coril SAB")
+st.markdown("""
+<div style="display:flex; align-items:center; gap:10px; margin-bottom:2px;">
+    <span style="font-size:1.8rem;">📈</span>
+    <span style="font-size:1.7rem; font-weight:800; color:#1a3a5c;">Simulador de inversiones</span>
+    <span style="font-size:0.9rem; color:#7a8ba0; font-weight:600; margin-top:6px;">Coril SAB</span>
+</div>
+""", unsafe_allow_html=True)
 
 # Navegación tipo "pasos" (permite botones Siguiente/Atrás)
 if AUTO:
