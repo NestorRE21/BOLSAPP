@@ -6,14 +6,14 @@ from plotly.subplots import make_subplots
 from optimizer import RiskProfile, ForcedAsset, View, BLConfig, run_profile, GKConfig, generate_gk_views, estimate_covariance, inject_forced_assets
 from projections import monte_carlo, stress_test, CRISIS_PERIODS
 
-st.set_page_config(page_title="Coril · Portafolios", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Simulador de inversiones · Coril SAB", page_icon="📈", layout="wide")
 RF,PPY = 0.02,52
 FICO_TK = "FICCMP13"
-FICO_DISPLAY = "FICO"
+FICO_DISPLAY = "Fondo de inversión"
 FICO = ForcedAsset(ret_annual=0.0625,vol_annual=0.010,beta=0.30,sector="Factoring",region="Perú",moneda="USD",instrumento="Fondo")
 
 def disp(ticker):
-    """Nombre visible de un ticker (FICCMP13 → FICO). Para uso en la interfaz."""
+    """Nombre visible de un ticker (FICCMP13 → Fondo de inversión). Para uso en la interfaz."""
     return FICO_DISPLAY if ticker == FICO_TK else ticker
 PERFILES = {"Conservador (30/70)":(0.30,0.70),"Moderado-bajo (40/60)":(0.40,0.60),
             "Moderado (50/50)":(0.50,0.50),"Crecimiento (60/40)":(0.60,0.40),"Agresivo (70/30)":(0.70,0.30)}
@@ -284,28 +284,29 @@ OPT_PERIOD = "15y"
 
 # ═══════════════════ PANTALLA DE MODO ═════════════════════════════════════════
 if st.session_state.mode is None:
-    st.title("Optimizador de portafolios · Coril SAB")
+    st.title("Simulador de inversiones – Coril SAB")
     st.markdown("### ¿Cómo quieres construir el portafolio?")
     st.write("")
     cm1, cm2 = st.columns(2)
     with cm1:
+        st.markdown("#### 🤖 Automático")
+        st.caption("El sistema calcula por ti las expectativas de retorno de cada activo. "
+                   "Solo eliges los activos y el perfil de riesgo, y obtienes el portafolio "
+                   "y las proyecciones al instante.")
+        st.markdown("- Expectativas calculadas automáticamente\n"
+                    "- Combina tendencia (momentum) y estabilidad (baja volatilidad)\n"
+                    "- Ideal para un análisis rápido y objetivo")
+        if st.button("Usar modo Automático", type="primary", use_container_width=True):
+            st.session_state.mode="auto"; st.rerun()
+    with cm2:
         st.markdown("#### 🎛️ Manual")
         st.caption("Tú defines las expectativas de retorno de cada activo. "
-                   "Control total sobre las views que alimentan el modelo Black-Litterman.")
-        st.markdown("- Ingresas tus propias views (absolutas y relativas)\n"
-                    "- Ajustas confianza por view\n"
+                   "Control total sobre los supuestos que alimentan el modelo.")
+        st.markdown("- Ingresas tus propias expectativas\n"
+                    "- Ajustas el nivel de confianza de cada una\n"
                     "- Ideal si tienes una tesis de inversión propia")
         if st.button("Usar modo Manual", type="primary", use_container_width=True):
             st.session_state.mode="manual"; st.rerun()
-    with cm2:
-        st.markdown("#### 🤖 Automático")
-        st.caption("El sistema genera las views por ti usando el framework de "
-                   "Grinold-Kahn (α = volatilidad · IC · score), combinando momentum y baja volatilidad. Solo eliges activos y perfil.")
-        st.markdown("- Views generadas por dos factores: momentum 12-1 y baja volatilidad\n"
-                    "- IC conservador (0.05, forecaster \"bueno\")\n"
-                    "- Portafolio y proyecciones automáticos")
-        if st.button("Usar modo Automático", type="primary", use_container_width=True):
-            st.session_state.mode="auto"; st.rerun()
     st.write("")
     st.info("💡 Podrás cambiar de modo en cualquier momento desde la barra lateral.")
     st.stop()
@@ -317,7 +318,7 @@ if st.session_state.tickers and st.session_state.benchmarks and st.session_state
     with st.spinner("Actualizando datos (15y)…"): run_dl(OPT_PERIOD)
 
 # ═══════════════════ MAIN ═════════════════════════════════════════════════════
-st.title("Optimizador de portafolios")
+st.title("Simulador de inversiones – Coril SAB")
 
 # Navegación tipo "pasos" (permite botones Siguiente/Atrás)
 if AUTO:
@@ -362,7 +363,7 @@ def nav_buttons(back_to=None, next_to=None, next_label="Siguiente →", back_lab
 if show_tab1:
     col_s,col_t=st.columns([4,1])
     with col_t: add_to=st.radio("Añadir como",["🔵 Renta variable","🟢 Renta fija","📊 Benchmark"])
-    with col_s: q=st.text_input("🔍 Buscar",placeholder="Apple, TLT, SHY, AGG, ^GSPC…")
+    with col_s: q=st.text_input("🔍 Buscar (escribe el nombre y presiona Enter)",placeholder="Apple, TLT, SHY, AGG, ^GSPC…")
     if q.strip():
         raw_res=search_yf(q.strip())
         res=filter_search(raw_res, add_to)
@@ -397,7 +398,7 @@ if show_tab1:
     with lb:
         st.caption(f"**🟢 Renta fija ({len(st.session_state.rf_tickers)})**")
         # Toggle FICO
-        include_fico = st.checkbox("Incluir FICO Coril (6.25%)", value=True, key="fico_toggle")
+        include_fico = st.checkbox("Incluir Fondo de inversión Coril (6.25%)", value=True, key="fico_toggle")
         st.session_state.include_fico = include_fico
         if include_fico:
             st.caption(f"✓ {FICO_DISPLAY} · {FICO.ret_annual:.2%} forzado")
@@ -746,15 +747,15 @@ if show_tab4:
         res=st.session_state.result
         wnorm=st.session_state.manual_weights if st.session_state.manual_weights is not None else res.weights
 
-        # MONTE CARLO
-        st.subheader("🎲 ¿Cuánto podría valer tu portafolio?")
-        c1,c2,c3=st.columns(3)
-        mh=c1.selectbox("Años a proyectar",[1,2,3,5,10],index=2,
-                        help="Horizonte de la proyección. En cuántos años quieres ver cómo evoluciona tu inversión.")
-        mn=c2.selectbox("Precisión",[1000,5000,10000],index=1,format_func=lambda x:f"{x:,}",
+        # ── CUADRO RESUMEN DESTACADO (arriba de todo — dato clave para el cliente) ──
+        # Controles de la proyección (compactos, arriba)
+        cc1,cc2,cc3=st.columns(3)
+        mh=cc1.selectbox("Años a proyectar",[1,2,3,5,10],index=2,
+                        help="Horizonte de la proyección. En cuántos años quieres ver cómo evoluciona la inversión.")
+        mn=cc2.selectbox("Precisión",[1000,5000,10000],index=1,format_func=lambda x:f"{x:,}",
                         help="Cuántos futuros posibles simular. Más simulaciones = resultado más estable, pero más lento.")
-        mt=c3.number_input("Meta (USD)",value=int(capital*1.2),step=10_000,format="%d",
-                           help="El capital que te gustaría alcanzar. Se calcula la probabilidad de llegar a esta meta.")
+        mt=cc3.number_input("Meta (USD)",value=int(capital*1.2),step=10_000,format="%d",
+                           help="El capital que se desea alcanzar. Se calcula la probabilidad de llegar a esta meta.")
         # Proyección automática: recalcula si cambian parámetros o pesos
         mc_sig=(round(float(wnorm.sum()),6),tuple(round(float(x),6) for x in wnorm.values),
                 int(mh),int(mn),int(mt),round(float(capital),2))
@@ -762,19 +763,32 @@ if show_tab4:
             with st.spinner("Calculando proyección…"):
                 st.session_state["mc"]=monte_carlo(wnorm,res.bl_returns,res.cov_matrix,capital,mh,PPY,mn,mt)
             st.session_state._mc_sig=mc_sig
+        mc=st.session_state.get("mc")
+        if mc:
+            p5_top=mc.percentiles[5][-1]; p50_top=mc.median_path[-1]; p95_top=mc.percentiles[95][-1]
+            st.markdown(f"### 📌 Proyección de la inversión a {mh} año(s)")
+            st.success(f"En un horizonte de **{mc.horizon_years:.0f} año(s)**, la inversión inicial de "
+                       f"{usd(mc.capital)} presenta un rango proyectado de resultados entre "
+                       f"**{usd(p5_top)}** (escenario pesimista) y "
+                       f"**{usd(p95_top)}** (escenario optimista). "
+                       f"El valor estimado bajo el escenario base es **{usd(p50_top)}**.")
+            tc1,tc2,tc3=st.columns(3)
+            tc1.metric("Escenario pesimista (P5)",f"${p5_top:,.0f}",delta=f"{p5_top/mc.capital-1:+.1%}")
+            tc2.metric("Escenario base (P50)",f"${p50_top:,.0f}",delta=f"{p50_top/mc.capital-1:+.1%}")
+            tc3.metric("Escenario optimista (P95)",f"${p95_top:,.0f}",delta=f"{p95_top/mc.capital-1:+.1%}")
+        st.divider()
+
+        # MONTE CARLO (detalle)
+        st.subheader("🎲 ¿Cuánto podría valer el portafolio? — Detalle")
         if "mc" in st.session_state and st.session_state["mc"]:
             mc=st.session_state["mc"]; gain=mc.median_path[-1]-mc.capital
             c1,c2,c3=st.columns(3)
             c1.metric(f"💰 Valor proyectado a {mh} año(s)",f"${mc.median_path[-1]:,.0f}",delta=f"+${gain:,.0f} ({gain/mc.capital:+.1%})",
-                      help="El valor más probable (mediana) de tu inversión al final del horizonte elegido.")
+                      help="El valor estimado (escenario base) de la inversión al final del horizonte elegido.")
             c2.metric("🛡️ Probabilidad de no perder",f"{100-mc.prob_loss*100:.0f}%",
-                      help="En qué porcentaje de los futuros simulados terminas con más dinero del que invertiste.")
+                      help="En qué porcentaje de los futuros simulados se termina con más dinero del invertido.")
             c3.metric("🎯 Probabilidad de alcanzar la meta",f"{mc.prob_target:.0%}",delta=f"${mc.target:,.0f}",delta_color="off",
-                      help="En qué porcentaje de los futuros simulados alcanzas o superas tu meta.")
-            st.success(f"En **{mc.horizon_years:.0f} año(s)**, tu inversión de {usd(mc.capital)} probablemente valdrá "
-                       f"entre **{usd(mc.percentiles[5][-1])}** (si el mercado va mal) y "
-                       f"**{usd(mc.percentiles[95][-1])}** (si va bien). "
-                       f"El resultado más probable es **{usd(mc.median_path[-1])}**.")
+                      help="En qué porcentaje de los futuros simulados se alcanza o supera la meta.")
 
             terminal = mc.terminal
             idx_best = int(np.argmax(terminal))
@@ -815,9 +829,10 @@ if show_tab4:
 
             # Interpretación MC
             st.info(
-                f"**Cómo leer este gráfico:** simulamos {len(terminal):,} futuros posibles para tu inversión. "
-                f"En 9 de cada 10, el capital terminó entre **{usd(p5_val)}** y **{usd(p95_val)}**. "
-                f"Lo más probable es que termine en **{usd(p50_val)}** "
+                f"**Cómo leer este gráfico:** simulamos {len(terminal):,} futuros posibles para la inversión. "
+                f"En 9 de cada 10, el capital terminó entre **{usd(p5_val)}** (escenario pesimista) y "
+                f"**{usd(p95_val)}** (escenario optimista). "
+                f"Bajo el escenario base, termina en **{usd(p50_val)}** "
                 f"({'una ganancia' if p50_val>mc.capital else 'una pérdida'} de "
                 f"**{abs(p50_val/mc.capital-1):.1%}**). "
                 f"Entre más angosta sea la banda oscura del centro, más predecible es el portafolio."
@@ -890,15 +905,15 @@ conjunto de futuros posibles."""
             # ── Métricas resumen ──
             st.markdown(f"##### Rango de valor proyectado a {mh} año(s)")
             sc1,sc2,sc3=st.columns(3)
-            sc1.metric("😟 Escenario malo (P5)",f"${p5_val:,.0f}",delta=f"{p5_val/mc.capital-1:+.1%}",
+            sc1.metric("Escenario pesimista (P5)",f"${p5_val:,.0f}",delta=f"{p5_val/mc.capital-1:+.1%}",
                        help="Percentil 5: solo el 5% de los futuros simulados terminó peor que esto. "
-                            "Es tu escenario pesimista razonable.")
-            sc2.metric("📊 Escenario más probable (P50)",f"${p50_val:,.0f}",delta=f"{p50_val/mc.capital-1:+.1%}",
+                            "Representa un escenario adverso razonable.")
+            sc2.metric("Escenario base (P50)",f"${p50_val:,.0f}",delta=f"{p50_val/mc.capital-1:+.1%}",
                        help="Mediana: la mitad de los futuros terminó por encima y la mitad por debajo. "
-                            "El resultado central esperado.")
-            sc3.metric("🚀 Escenario bueno (P95)",f"${p95_val:,.0f}",delta=f"{p95_val/mc.capital-1:+.1%}",
+                            "Es el resultado central estimado.")
+            sc3.metric("Escenario optimista (P95)",f"${p95_val:,.0f}",delta=f"{p95_val/mc.capital-1:+.1%}",
                        help="Percentil 95: solo el 5% de los futuros simulados terminó mejor que esto. "
-                            "Es tu escenario optimista razonable.")
+                            "Representa un escenario favorable razonable.")
 
             # ── Explicación comparativa ──
             with st.expander("¿Por qué el primer gráfico y el segundo muestran rangos distintos?"):
