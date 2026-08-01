@@ -624,8 +624,11 @@ def mean_variance_optimize(mu: pd.Series, cov: pd.DataFrame,
 
     eq_idx = np.array([i for i, a in enumerate(assets) if a in eq_set])
     fi_idx = np.array([i for i, a in enumerate(assets) if a in fi_set])
-    if len(eq_idx) == 0: raise ValueError("Sin activos de renta variable.")
-    if len(fi_idx) == 0: raise ValueError("Sin activos de renta fija.")
+    # Solo exigir un bucket si su target es > 0 (permite portafolios puros)
+    if profile.equity_target > 1e-6 and len(eq_idx) == 0:
+        raise ValueError("Sin activos de renta variable.")
+    if profile.fico_target > 1e-6 and len(fi_idx) == 0:
+        raise ValueError("Sin activos de renta fija.")
 
     beta_target = 0.5 * (profile.beta_min + profile.beta_max)
     gamma       = config.gamma_beta
@@ -642,10 +645,12 @@ def mean_variance_optimize(mu: pd.Series, cov: pd.DataFrame,
                      - gamma * cp.square(beta_v @ w - beta_target))
         cons = [
             cp.sum(w) == 1.0,
-            cp.sum(w[eq_idx]) == profile.equity_target,
-            cp.sum(w[fi_idx]) == profile.fico_target,
             w >= 0.0,
         ]
+        if len(eq_idx) > 0:
+            cons.append(cp.sum(w[eq_idx]) == profile.equity_target)
+        if len(fi_idx) > 0:
+            cons.append(cp.sum(w[fi_idx]) == profile.fico_target)
         for i, (lo, hi) in enumerate(lo_hi):
             cons.append(w[i] <= hi)
 
@@ -670,33 +675,41 @@ def mean_variance_optimize(mu: pd.Series, cov: pd.DataFrame,
 
     constraints = [
         {"type": "eq", "fun": lambda w: w.sum() - 1.0},
-        {"type": "eq", "fun": lambda w, ix=eq_idx: w[ix].sum() - profile.equity_target},
-        {"type": "eq", "fun": lambda w, ix=fi_idx: w[ix].sum() - profile.fico_target},
     ]
+    if len(eq_idx) > 0:
+        constraints.append({"type": "eq", "fun": lambda w, ix=eq_idx: w[ix].sum() - profile.equity_target})
+    if len(fi_idx) > 0:
+        constraints.append({"type": "eq", "fun": lambda w, ix=fi_idx: w[ix].sum() - profile.fico_target})
     # Multi-start: el equiponderado puede ser un punto estacionario que atrapa
     # a SLSQP. Se prueban varios x0 (incluido uno sesgado por retorno) y se
     # elige la mejor solución factible.
     def _seed_equal():
         x = np.zeros(n)
-        x[eq_idx] = profile.equity_target / len(eq_idx)
-        x[fi_idx] = profile.fico_target   / len(fi_idx)
-        return x
+        if len(eq_idx) > 0:
+            x[eq_idx] = profile.equity_target / len(eq_idx)
+        if len(fi_idx) > 0:
+            x[fi_idx] = profile.fico_target / len(fi_idx)
+        s = x.sum()
+        return x / s if s > EPS else np.full(n, 1.0/n)
 
     def _seed_return_tilt():
         # sesga el bucket equity hacia los de mayor mu, respetando el cap
         x = np.zeros(n)
-        x[fi_idx] = profile.fico_target / len(fi_idx)
-        mu_eq   = mu_np[eq_idx]
-        order   = np.argsort(mu_eq)[::-1]
-        restante = profile.equity_target
-        cap      = config.max_weight_equity
-        for k in order:
-            take = min(cap, restante)
-            x[eq_idx[k]] = take
-            restante -= take
-            if restante <= EPS:
-                break
-        return x
+        if len(fi_idx) > 0:
+            x[fi_idx] = profile.fico_target / len(fi_idx)
+        if len(eq_idx) > 0:
+            mu_eq   = mu_np[eq_idx]
+            order   = np.argsort(mu_eq)[::-1]
+            restante = profile.equity_target
+            cap      = config.max_weight_equity
+            for k in order:
+                take = min(cap, restante)
+                x[eq_idx[k]] = take
+                restante -= take
+                if restante <= EPS:
+                    break
+        s = x.sum()
+        return x / s if s > EPS else np.full(n, 1.0/n)
 
     best_w, best_obj, best_ok, best_msg = None, np.inf, False, ""
     for x0 in (_seed_return_tilt(), _seed_equal()):
@@ -753,10 +766,16 @@ def run_profile(returns: pd.DataFrame, equity_assets: Sequence[str],
     forced_tickers = list(forced_assets.keys())
     all_rf        = rf_market + forced_tickers  # Todo lo que va al bucket RF
 
-    if not equity_assets:
+    # Permitir portafolios puros: solo exigir un bucket si su target > 0.
+    needs_equity = profile.equity_target > 1e-6
+    needs_rf     = profile.fico_target  > 1e-6
+
+    if needs_equity and not equity_assets:
         raise ValueError("No hay activos de renta variable válidos en 'returns'.")
-    if not all_rf:
-        raise ValueError("No hay activos de renta fija (ni bonos ni FICO).")
+    if needs_rf and not all_rf:
+        raise ValueError("No hay activos de renta fija (ni bonos ni fondo de inversión).")
+    if not equity_assets and not all_rf:
+        raise ValueError("No hay ningún activo válido para optimizar.")
 
     # 1. Construir DataFrame completo: equity + RF mercado + FICO sintético
     data_cols = equity_assets + rf_market
