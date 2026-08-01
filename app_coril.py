@@ -91,15 +91,56 @@ def calc_betas(r,b):
         out[t]=round(float(np.cov(tv[m],bv[m],ddof=1)[0,1]/bvar),3) if m.sum()>10 and bvar>1e-12 else 1.0
     return pd.Series(out)
 
+# Sectores conocidos de tickers comunes (respaldo si yfinance falla o limita)
+_KNOWN_SECTORS = {
+    # Tecnología
+    "AAPL":"Tecnología","MSFT":"Tecnología","NVDA":"Tecnología","GOOGL":"Tecnología",
+    "GOOG":"Tecnología","META":"Tecnología","AVGO":"Tecnología","ORCL":"Tecnología",
+    "CRM":"Tecnología","ADBE":"Tecnología","AMD":"Tecnología","INTC":"Tecnología",
+    "CSCO":"Tecnología","QCOM":"Tecnología","TXN":"Tecnología","IBM":"Tecnología",
+    "NOW":"Tecnología","INTU":"Tecnología","AMAT":"Tecnología","MU":"Tecnología",
+    # Consumo discrecional
+    "AMZN":"Consumo discrecional","TSLA":"Consumo discrecional","HD":"Consumo discrecional",
+    "MCD":"Consumo discrecional","NKE":"Consumo discrecional","SBUX":"Consumo discrecional",
+    "LOW":"Consumo discrecional","BKNG":"Consumo discrecional","TJX":"Consumo discrecional",
+    # Consumo básico
+    "KO":"Consumo básico","PEP":"Consumo básico","PG":"Consumo básico","COST":"Consumo básico",
+    "WMT":"Consumo básico","MDLZ":"Consumo básico","CL":"Consumo básico","MO":"Consumo básico",
+    # Salud
+    "JNJ":"Salud","UNH":"Salud","LLY":"Salud","PFE":"Salud","ABBV":"Salud","MRK":"Salud",
+    "TMO":"Salud","ABT":"Salud","DHR":"Salud","BMY":"Salud","AMGN":"Salud","CVS":"Salud",
+    # Financiero
+    "JPM":"Financiero","BAC":"Financiero","WFC":"Financiero","GS":"Financiero","MS":"Financiero",
+    "V":"Financiero","MA":"Financiero","AXP":"Financiero","BLK":"Financiero","C":"Financiero",
+    "SCHW":"Financiero","BRK-B":"Financiero","SPGI":"Financiero",
+    # Energía / Industrial / Comunicaciones
+    "XOM":"Energía","CVX":"Energía","COP":"Energía","SLB":"Energía",
+    "BA":"Industrial","CAT":"Industrial","GE":"Industrial","HON":"Industrial","UPS":"Industrial",
+    "DIS":"Comunicaciones","NFLX":"Comunicaciones","CMCSA":"Comunicaciones","T":"Comunicaciones",
+    "VZ":"Comunicaciones",
+    # ETFs de equity (índices amplios / sectoriales)
+    "QQQ":"ETF · Tecnología (Nasdaq 100)","SPY":"ETF · Mercado amplio (S&P 500)",
+    "VOO":"ETF · Mercado amplio (S&P 500)","VTI":"ETF · Mercado total EE.UU.",
+    "IWM":"ETF · Small caps","DIA":"ETF · Dow Jones","VUG":"ETF · Crecimiento",
+    "VTV":"ETF · Valor","VYM":"ETF · Dividendos","SCHD":"ETF · Dividendos",
+    "XLK":"ETF · Tecnología","XLF":"ETF · Financiero","XLE":"ETF · Energía",
+    "XLV":"ETF · Salud","XLY":"ETF · Consumo discrecional","XLP":"ETF · Consumo básico",
+    "SOXX":"ETF · Semiconductores","SMH":"ETF · Semiconductores","ARKK":"ETF · Innovación",
+    "EFA":"ETF · Internacional desarrollado","EEM":"ETF · Emergentes","VEA":"ETF · Internacional",
+}
+
 @st.cache_data(show_spinner=False,ttl=600)
 def fetch_sec(tickers):
     import yfinance as yf
     out={}
     for t in tickers:
+        # Respaldo conocido primero (siempre disponible, aunque yfinance falle)
+        if t in _KNOWN_SECTORS:
+            out[t]=_KNOWN_SECTORS[t]; continue
         try:
             i=yf.Ticker(t).info or {}; s=i.get("sector","")
-            out[t]=s if s else (f"ETF · {i.get('category','')[:25]}" if i.get("quoteType")=="ETF" else i.get("industry","") or "–")
-        except: out[t]="–"
+            out[t]=s if s else (f"ETF · {i.get('category','')[:25]}" if i.get("quoteType")=="ETF" else i.get("industry","") or "Otros")
+        except: out[t]="Otros"
     return pd.Series(out)
 
 @st.cache_data(show_spinner=False,ttl=300)
@@ -419,7 +460,7 @@ if show_tab1:
         include_fico = st.checkbox("Incluir Fondo de inversión Coril (6.25%)", value=True, key="fico_toggle")
         st.session_state.include_fico = include_fico
         if include_fico:
-            st.caption(f"✓ {FICO_DISPLAY} · {FICO.ret_annual:.2%} forzado")
+            st.caption(f"✓ {FICO_DISPLAY} · {FICO.ret_annual:.2%} anual")
         for i,t in enumerate(st.session_state.rf_tickers):
             c1,c2=st.columns([5,1]); c1.write(t)
             if c2.button("✕",key=f"rrf{i}"): st.session_state.rf_tickers.pop(i)
@@ -690,21 +731,20 @@ if show_tab3:
             st.markdown("##### 📅 Comportamiento histórico del portafolio")
             st.caption("Estos números resumen cómo se habría comportado esta combinación de activos "
                        "en el pasado, según los datos descargados.")
-            h1,h2,h3=st.columns(3)
+            h1,h2,h3,h4,h5=st.columns(5)
             h1.metric("Retorno histórico anual",f"{ann_r:.2%}",
                       help="Cuánto habría rendido el portafolio en promedio por año, según su historia. "
                            "No es una promesa a futuro, es lo que ocurrió en el pasado.")
             h2.metric("Volatilidad anual",f"{ann_v:.2%}",
                       help="Qué tanto sube y baja el portafolio. Más alta = más movimiento y más riesgo. "
                            "Es la desviación estándar de los retornos, anualizada.")
-            h3.metric("Caída máxima (drawdown)",f"{dd.min():.2%}",
+            h3.metric("Caída máxima",f"{dd.min():.2%}",
                       help="La peor caída desde un punto alto hasta el punto más bajo que sufrió el "
                            "portafolio en el período. Mide el peor mal momento que habrías vivido.")
-            h4,h5=st.columns(2)
-            h4.metric("VaR 95% (pérdida esperada)",f"{var95:.2%}",
+            h4.metric("VaR 95%",f"{var95:.2%}",
                       help="Value at Risk. En el 5% de los peores años, esperarías perder al menos "
                            "este porcentaje. Es el umbral de pérdida en un mal escenario.")
-            h5.metric("CVaR 95% (pérdida extrema)",f"{cvar95:.2%}",
+            h5.metric("CVaR 95%",f"{cvar95:.2%}",
                       help="Conditional VaR o Expected Shortfall. Cuando las cosas van realmente mal "
                            "(ese peor 5%), esta es la pérdida promedio. Siempre es peor que el VaR "
                            "porque mira el promedio de la cola, no solo el umbral.")
@@ -780,6 +820,40 @@ if show_tab3:
                             f"que tu portafolio ({port_sh:.2f}) en este período. Esto puede deberse a que "
                             f"tu portafolio prioriza otros objetivos (menor caída, perfil de riesgo, "
                             f"diversificación), no solo el retorno ajustado por riesgo.")
+
+                # ── Rendimiento año por año (barras agrupadas) ──────────────
+                st.markdown("###### 📊 Rendimiento por año")
+                st.caption("Retorno de cada año calendario, comparado con los benchmarks. "
+                           "Usa el mismo rango del gráfico de evolución de arriba.")
+
+                def _yearly_returns(r):
+                    """Retorno por año calendario a partir de log-retornos."""
+                    r = r.dropna()
+                    if len(r) < 2: return {}
+                    by_year = {}
+                    for yr, grp in r.groupby(r.index.year):
+                        by_year[int(yr)] = float(np.exp(grp.sum())-1)
+                    return by_year
+
+                # Portafolio y benchmarks, restringidos al rango visible (pr ya está filtrado)
+                port_yearly = _yearly_returns(pr)
+                years_sorted = sorted(port_yearly.keys())
+                if years_sorted:
+                    figy = go.Figure()
+                    figy.add_trace(go.Bar(x=[str(y) for y in years_sorted],
+                        y=[port_yearly[y] for y in years_sorted],
+                        name="📊 Tu portafolio", marker_color=C_RV,
+                        text=[f"{port_yearly[y]:+.0%}" for y in years_sorted], textposition="outside"))
+                    for i,n in enumerate(st.session_state.bench_rets):
+                        bser = st.session_state.bench_rets[n].reindex(pr.index)
+                        by = _yearly_returns(bser)
+                        figy.add_trace(go.Bar(x=[str(y) for y in years_sorted],
+                            y=[by.get(y) for y in years_sorted],
+                            name=n, marker_color=BC[i%len(BC)]))
+                    figy.update_yaxes(tickformat=".0%")
+                    figy.update_layout(barmode="group",height=320,margin=dict(l=0,r=0,t=5,b=0),
+                                       legend=dict(orientation="h",y=1.12,font=dict(size=10)))
+                    st.plotly_chart(figy,use_container_width=True,key="chart_yearly_bench")
             else:
                 st.caption("Agrega uno o más benchmarks en la pestaña **Activos** para ver la comparación.")
 
