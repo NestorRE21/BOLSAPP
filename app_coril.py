@@ -191,6 +191,14 @@ POPULARES_RV = [
     ("QQQ","Tecnológicas EE.UU. (QQQ)","📈"),("SPY","S&P 500 (SPY)","🇺🇸"),
     ("VTI","Todo el mercado EE.UU. (VTI)","🌐"),
 ]
+# Acciones populares de la Bolsa de Valores de Lima (BVL) — vía API de Coril
+POPULARES_BVL = [
+    ("BUENAVC1","Buenaventura (minera)","⛏️"),("MINSURI1","Minsur (estaño)","🪨"),
+    ("CREDITC1","Credicorp (banca)","🏦"),("ALICORC1","Alicorp (consumo)","🛒"),
+    ("BAP","Credicorp (ADR)","🏦"),("VOLCABC1","Volcan (minera)","⛏️"),
+    ("FERREYC1","Ferreycorp (maquinaria)","🚜"),("CVERDEC1","Cerro Verde (cobre)","🟠"),
+    ("INRETC1","InRetail (retail)","🏬"),("LUSURC1","Luz del Sur (energía)","💡"),
+]
 POPULARES_RF = [
     ("AGG","Bonos EE.UU. amplio (AGG)","🏛️"),("BND","Bonos totales (BND)","🏦"),
     ("TLT","Bonos largo plazo (TLT)","📉"),("SHY","Bonos corto plazo (SHY)","🛡️"),
@@ -203,7 +211,7 @@ POPULARES_BK = [
 
 # Mapa ticker → nombre amigable (a partir de los catálogos populares)
 _NOMBRES_CONOCIDOS = {}
-for _cat in (POPULARES_RV, POPULARES_RF, POPULARES_BK):
+for _cat in (POPULARES_RV, POPULARES_BVL, POPULARES_RF, POPULARES_BK):
     for _tk,_nm,_emo in _cat:
         _NOMBRES_CONOCIDOS[_tk] = _nm
 
@@ -254,12 +262,32 @@ def _yf_period(period):
 @st.cache_data(show_spinner=False,ttl=600)
 def dl_eq(tickers,period="15y"):
     import yfinance as yf
-    params = _yf_period(period)
-    raw=yf.download(tickers,**params,interval="1wk",auto_adjust=True,progress=False)
-    if raw is None or raw.empty: return None
-    px=raw["Close"].copy() if isinstance(raw.columns,pd.MultiIndex) else raw[["Close"]].rename(columns={"Close":list(tickers)[0]})
-    px=px.dropna(how="all").ffill(); px.index=pd.to_datetime(px.index).tz_localize(None)
-    return np.log(px/px.shift(1)).replace([np.inf,-np.inf],np.nan).dropna(how="all")
+    tickers=[t.strip().upper() for t in tickers if t and t.strip()]
+    # Separar BVL (Coril) de extranjeras (yfinance)
+    bvl = [t for t in tickers if CORIL_OK and coril_api.es_bvl(t)] if CORIL_OK else []
+    ext = [t for t in tickers if t not in bvl]
+
+    frames=[]
+    # Extranjeras por yfinance (semanal, como siempre)
+    if ext:
+        params = _yf_period(period)
+        raw=yf.download(ext,**params,interval="1wk",auto_adjust=True,progress=False)
+        if raw is not None and not raw.empty:
+            px=raw["Close"].copy() if isinstance(raw.columns,pd.MultiIndex) else raw[["Close"]].rename(columns={"Close":ext[0]})
+            px=px.dropna(how="all").ffill(); px.index=pd.to_datetime(px.index).tz_localize(None)
+            lr_ext=np.log(px/px.shift(1)).replace([np.inf,-np.inf],np.nan).dropna(how="all")
+            frames.append(lr_ext)
+    # BVL por API de Coril (diario → semanal, con forward-fill)
+    if bvl:
+        px_bvl=coril_api.precios_semanales(bvl)
+        if not px_bvl.empty:
+            lr_bvl=np.log(px_bvl/px_bvl.shift(1)).replace([np.inf,-np.inf],np.nan).dropna(how="all")
+            frames.append(lr_bvl)
+
+    if not frames: return None
+    # Combinar por fecha (outer join) y rellenar huecos de alineación
+    combinado=pd.concat(frames,axis=1).sort_index()
+    return combinado
 
 @st.cache_data(show_spinner=False,ttl=600)
 def dl_bk(tks,period="15y"):
@@ -341,25 +369,34 @@ def fetch_sec(tickers):
 
 @st.cache_data(show_spinner=False,ttl=300)
 def fetch_precios(tickers):
-    """Precio actual (último cierre) de cada ticker. Devuelve dict {ticker: precio}."""
+    """Precio actual de cada ticker. BVL vía Coril, extranjeras vía yfinance."""
     import yfinance as yf
     out={}
-    tickers=[t for t in tickers if t and not t.startswith("^")]  # sin índices
+    tickers=[t.strip().upper() for t in tickers if t and not t.startswith("^")]
     if not tickers: return out
-    try:
-        data=yf.download(list(tickers),period="5d",interval="1d",
-                         auto_adjust=True,progress=False)
-        close=data["Close"] if "Close" in data else data
-        if isinstance(close,pd.Series):
-            v=close.dropna()
-            if len(v)>0: out[list(tickers)[0]]=float(v.iloc[-1])
-        else:
-            for t in tickers:
-                if t in close.columns:
-                    v=close[t].dropna()
-                    if len(v)>0: out[t]=float(v.iloc[-1])
-    except Exception:
-        pass
+    # BVL por API de Coril
+    bvl=[t for t in tickers if CORIL_OK and coril_api.es_bvl(t)] if CORIL_OK else []
+    ext=[t for t in tickers if t not in bvl]
+    if bvl:
+        try:
+            out.update(coril_api.precios_actuales(bvl))
+        except Exception: pass
+    # Extranjeras por yfinance
+    if ext:
+        try:
+            data=yf.download(list(ext),period="5d",interval="1d",
+                             auto_adjust=True,progress=False)
+            close=data["Close"] if "Close" in data else data
+            if isinstance(close,pd.Series):
+                v=close.dropna()
+                if len(v)>0: out[ext[0]]=float(v.iloc[-1])
+            else:
+                for t in ext:
+                    if t in close.columns:
+                        v=close[t].dropna()
+                        if len(v)>0: out[t]=float(v.iloc[-1])
+        except Exception:
+            pass
     return out
 
 def puede_agregar(nuevo_tk, capital):
@@ -422,13 +459,24 @@ def acciones_enteras(pesos, precios, capital, fraccionables):
 @st.cache_data(show_spinner=False,ttl=300)
 def search_yf(q):
     import requests
+    resultados=[]
+    # Si el texto parece un nemónico BVL, validarlo contra la API de Coril
+    q_up=q.strip().upper()
+    if CORIL_OK and coril_api.es_bvl(q_up) and coril_api.api_configurada():
+        try:
+            _nombre=coril_api.nombre_valor(q_up)
+            if _nombre:
+                resultados.append({"tk":q_up,"nm":_nombre,"tp":"EQUITY","ex":"BVL"})
+        except Exception: pass
+    # Búsqueda normal por Yahoo (internacionales)
     try:
         r=requests.get("https://query2.finance.yahoo.com/v1/finance/search",params={"q":q,"quotesCount":12,"newsCount":0},
                        headers={"User-Agent":"Mozilla/5.0"},timeout=5)
-        return [{"tk":x["symbol"],"nm":x.get("shortname") or x.get("longname",""),
+        resultados+=[{"tk":x["symbol"],"nm":x.get("shortname") or x.get("longname",""),
                  "tp":x.get("quoteType",""),"ex":x.get("exchange","")}
                 for x in r.json().get("quotes",[]) if x.get("symbol")]
-    except: return []
+    except: pass
+    return resultados
 
 # Keywords en nombre que indican renta fija
 _RF_KW = {"bond","treasury","income","fixed","aggregate","debt","govt","municipal",
@@ -894,7 +942,15 @@ depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
     # ── Inversiones populares (un clic, sin conocer tickers) ──────────────
     with st.expander("⭐ ¿No sabes qué agregar? Elige de las inversiones más populares", expanded=not st.session_state.tickers):
         if add_to=="🔵 Renta variable":
-            _pop=POPULARES_RV; _dest="tickers"; _lbl="RV"
+            _dest="tickers"; _lbl="RV"
+            # Sub-selector: acciones peruanas (BVL) o extranjeras
+            _mercado=st.radio("Mercado",["🌎 Extranjeras","🇵🇪 Peruanas (BVL)"],
+                              horizontal=True,key="pop_mercado")
+            _pop = POPULARES_BVL if "Peruanas" in _mercado else POPULARES_RV
+            if "Peruanas" in _mercado and not (CORIL_OK and coril_api.api_configurada()):
+                st.warning("La conexión con la API de Coril no está disponible. "
+                           "Las acciones peruanas requieren esa conexión.")
+                _pop=[]
         elif add_to=="🟢 Renta fija":
             _pop=POPULARES_RF; _dest="rf_tickers"; _lbl="RF"
         else:
@@ -907,6 +963,7 @@ depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
                 ya = tk in st.session_state.get(_dest,[])
                 if st.button(f"{emo} {nombre}"+(" ✓" if ya else ""),
                              key=f"pop_{_dest}_{tk}",use_container_width=True,disabled=ya):
+                    st.session_state.asset_names[tk]=nombre
                     if _dest=="tickers":
                         _ok,_pn,_sa,_tot=puede_agregar(tk,capital)
                         if _ok:
