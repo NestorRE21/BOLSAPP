@@ -178,6 +178,21 @@ def log_retornos(symbols, interval: str = "1d") -> pd.DataFrame:
     return lr
 
 
+def precios_semanales(symbols) -> pd.DataFrame:
+    """
+    Descarga el histórico de símbolos BVL y lo devuelve como precios SEMANALES
+    (último cierre de cada semana), para poder combinarlo con datos de yfinance
+    que también son semanales. Índice = viernes de cada semana, sin timezone.
+    """
+    px = descargar_precios_historicos(symbols, interval="1d")
+    if px.empty:
+        return pd.DataFrame()
+    # Resamplear a semanal (viernes), tomando el último precio de la semana
+    semanal = px.resample("W-FRI").last().ffill()
+    semanal.index = pd.to_datetime(semanal.index).tz_localize(None)
+    return semanal
+
+
 # ─────────────────────── Precios actuales ─────────────────────────────────
 def precio_actual(symbol: str, country: Optional[str] = None) -> Optional[float]:
     """Último precio de un símbolo (para el plan de compra)."""
