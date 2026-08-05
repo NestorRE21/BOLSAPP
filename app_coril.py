@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 """Coril SAB · Optimizador BL v7 · Compacto"""
 import numpy as np, pandas as pd, streamlit as st
