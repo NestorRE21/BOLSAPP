@@ -1196,9 +1196,11 @@ if show_tab3:
                                "(por ejemplo, si son solo instrumentos de renta fija).")
 
             # ── PLAN DE COMPRA EN ACCIONES ENTERAS ──────────────────────────
-            st.markdown("##### 🧾 Plan de compra (acciones enteras)")
-            st.caption("Como las acciones se compran completas (no por partes), aquí traducimos "
-                       "los porcentajes en el número exacto de acciones a comprar con tu monto.")
+            st.markdown("##### 🧾 Plan de compra — cuántas acciones comprar")
+            st.caption("El portafolio óptimo se calcula en porcentajes, pero las acciones se compran "
+                       "completas (no puedes comprar media acción). Aquí traducimos esos porcentajes "
+                       "al número exacto de acciones que comprarías con tu monto de "
+                       f"**{usd(capital)}**.")
             _acc_rv=[a for a in wnorm.index if a in st.session_state.tickers]
             _precios_plan=fetch_precios(tuple(_acc_rv)) if _acc_rv else {}
             if not _precios_plan:
@@ -1209,34 +1211,64 @@ if show_tab3:
                 _fraccionables=set(st.session_state.rf_tickers) | {FICO_TK}
                 _pesos={a: float(wnorm[a]) for a in wnorm.index}
                 _unid,_mfrac,_efectivo,_gastado=acciones_enteras(_pesos,_precios_plan,capital,_fraccionables)
-                # Construir tabla
-                _filas=[]
+
+                st.markdown("**🔵 Acciones (se compran por unidades enteras)**")
+                _filas_acc=[]
                 for a in wnorm.index:
-                    _obj=_pesos[a]*capital
-                    if a in _precios_plan:   # acción entera
-                        _n=_unid.get(a,0); _real=_n*_precios_plan[a]
-                        _filas.append({"Inversión":nombre_activo(a),"Objetivo %":f"{_pesos[a]:.1%}",
-                                       "Precio unit.":f"${_precios_plan[a]:,.2f}","A comprar":f"{_n} acciones",
-                                       "Monto real":f"${_real:,.0f}","% real":f"{_real/capital:.1%}"})
-                    else:                     # fraccionable (Fondo / RF)
-                        _m=_mfrac.get(a,_obj)
-                        _filas.append({"Inversión":nombre_activo(a),"Objetivo %":f"{_pesos[a]:.1%}",
-                                       "Precio unit.":"—","A comprar":"monto libre",
-                                       "Monto real":f"${_m:,.0f}","% real":f"{_m/capital:.1%}"})
-                st.dataframe(pd.DataFrame(_filas),use_container_width=True,hide_index=True)
+                    if a not in _precios_plan: continue
+                    _precio=_precios_plan[a]
+                    _obj_monto=_pesos[a]*capital           # cuánto dinero pide el óptimo
+                    _ideal=_obj_monto/_precio               # acciones ideales (con decimales)
+                    _real_n=_unid.get(a,0)                  # acciones enteras que compras
+                    _real_monto=_real_n*_precio
+                    _falta=_ideal-_real_n                   # cuántas quedaron sin comprar (fracción)
+                    _texto_falta = f"{_falta:.2f}" if _falta>=0.05 else "—"
+                    _filas_acc.append({
+                        "Empresa": nombre_activo(a),
+                        "Precio x acción": f"${_precio:,.2f}",
+                        "Ideal (según %)": f"{_ideal:.2f}",
+                        "Vas a comprar": f"{_real_n}",
+                        "Te faltó": _texto_falta,
+                        "Inversión real": f"${_real_monto:,.0f}",
+                    })
+                if _filas_acc:
+                    st.dataframe(pd.DataFrame(_filas_acc),use_container_width=True,hide_index=True)
+                    st.caption("**Cómo leer la tabla:** *Ideal* es cuántas acciones te tocarían según el "
+                               "porcentaje óptimo (con decimales). *Vas a comprar* es el número redondo que "
+                               "realmente comprarías. *Te faltó* es la fracción que no se pudo comprar porque "
+                               "no se venden partes de acción — es una diferencia pequeña y normal.")
+
+                # Fraccionables (Fondo / RF): se muestran aparte porque sí aceptan montos exactos
+                _filas_frac=[]
+                for a in wnorm.index:
+                    if a in _precios_plan: continue
+                    _m=_mfrac.get(a,_pesos[a]*capital)
+                    _filas_frac.append({
+                        "Instrumento": nombre_activo(a),
+                        "Objetivo %": f"{_pesos[a]:.1%}",
+                        "Monto a invertir": f"${_m:,.0f}",
+                    })
+                if _filas_frac:
+                    st.markdown("**🟢 Renta fija y fondos (se invierte el monto exacto, sin comprar unidades)**")
+                    st.dataframe(pd.DataFrame(_filas_frac),use_container_width=True,hide_index=True)
+
+                st.markdown("**Resumen**")
                 _invertido=capital-_efectivo
                 pcol1,pcol2,pcol3=st.columns(3)
-                pcol1.metric("💰 Total invertido",f"${_invertido:,.0f}",delta=f"{_invertido/capital:.1%} del monto")
+                pcol1.metric("💰 Total invertido",f"${_invertido:,.0f}",delta=f"{_invertido/capital:.0%} de tu monto")
                 pcol2.metric("🏦 En acciones",f"${_gastado:,.0f}")
-                pcol3.metric("💵 Efectivo sin invertir",f"${_efectivo:,.0f}",
+                pcol3.metric("💵 Te sobra (efectivo)",f"${_efectivo:,.0f}",
                              delta=None if _efectivo<1 else f"{_efectivo/capital:.1%}",delta_color="off")
                 if _efectivo>=1:
-                    st.caption(f"💡 Quedan **${_efectivo:,.0f}** sin invertir porque no alcanzan para otra "
-                               "acción entera. Si tuvieras un fondo o instrumento de renta fija, ese sobrante "
-                               "se colocaría ahí automáticamente.")
+                    st.warning(f"💡 Te sobran **{usd(_efectivo)}** que no alcanzan para comprar otra acción "
+                               "entera. Como no tienes un fondo o renta fija donde colocarlos, ese dinero "
+                               "quedaría sin invertir. Podrías subir el monto o agregar el Fondo de inversión "
+                               "para aprovechar ese sobrante.")
                 else:
-                    st.caption("✅ Todo tu monto queda invertido: el sobrante de las acciones se coloca "
-                               "en el Fondo de inversión / renta fija, que aceptan montos libres.")
+                    st.success("✅ **Todo tu dinero queda invertido.** El sobrante de las acciones "
+                               "(lo que no alcanzó para una acción más) se coloca automáticamente en el "
+                               "Fondo de inversión / renta fija, que sí aceptan cualquier monto.")
+
 
             # Evolución histórica — filtrada por chart_years, siempre desde capital inicial
             st.markdown("##### 📈 Evolución histórica del capital")
