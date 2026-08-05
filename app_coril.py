@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """Coril SAB · Optimizador BL v7 · Compacto"""
 import numpy as np, pandas as pd, streamlit as st
@@ -198,6 +199,15 @@ for _cat in (POPULARES_RV, POPULARES_RF, POPULARES_BK):
     for _tk,_nm,_emo in _cat:
         _NOMBRES_CONOCIDOS[_tk] = _nm
 
+# Nombres de índices comunes (para mostrar en todas las pantallas)
+_NOMBRES_CONOCIDOS.update({
+    "^GSPC":"S&P 500","^IXIC":"Nasdaq Composite","^DJI":"Dow Jones","^RUT":"Russell 2000",
+    "^VIX":"Índice de volatilidad (VIX)","^FTSE":"FTSE 100 (Reino Unido)","^N225":"Nikkei 225 (Japón)",
+    "^GDAXI":"DAX (Alemania)","^FCHI":"CAC 40 (Francia)","^STOXX50E":"Euro Stoxx 50",
+    "^HSI":"Hang Seng (Hong Kong)","^BVSP":"Bovespa (Brasil)","^MXX":"IPC (México)",
+    "^TNX":"Bono EE.UU. 10 años","^GSPTSE":"S&P/TSX (Canadá)",
+})
+
 def nombre_activo(tk):
     """Nombre amigable de un ticker: catálogo conocido, nombre buscado, o el ticker."""
     if tk == FICO_TK: return FICO_DISPLAY
@@ -322,6 +332,29 @@ def fetch_sec(tickers):
     return pd.Series(out)
 
 @st.cache_data(show_spinner=False,ttl=300)
+def fetch_precios(tickers):
+    """Precio actual (último cierre) de cada ticker. Devuelve dict {ticker: precio}."""
+    import yfinance as yf
+    out={}
+    tickers=[t for t in tickers if t and not t.startswith("^")]  # sin índices
+    if not tickers: return out
+    try:
+        data=yf.download(list(tickers),period="5d",interval="1d",
+                         auto_adjust=True,progress=False)
+        close=data["Close"] if "Close" in data else data
+        if isinstance(close,pd.Series):
+            v=close.dropna()
+            if len(v)>0: out[list(tickers)[0]]=float(v.iloc[-1])
+        else:
+            for t in tickers:
+                if t in close.columns:
+                    v=close[t].dropna()
+                    if len(v)>0: out[t]=float(v.iloc[-1])
+    except Exception:
+        pass
+    return out
+
+@st.cache_data(show_spinner=False,ttl=300)
 def search_yf(q):
     import requests
     try:
@@ -375,9 +408,15 @@ def _is_leveraged(r):
     if any(kw in nm for kw in _LEV_KW): return True
     return False
 
+def _is_index(r):
+    """¿Es un índice de mercado? (solo permitido en benchmark)"""
+    if r.get("tp","")=="INDEX": return True
+    if (r.get("tk","") or "").startswith("^"): return True
+    return False
+
 def _is_rf_candidate(r):
-    """Heurística: ¿el resultado parece renta fija? (nunca apalancados)"""
-    if _is_excluded(r) or _is_leveraged(r): return False   # RF nunca apalancado
+    """Heurística: ¿el resultado parece renta fija? (nunca apalancados ni índices)"""
+    if _is_excluded(r) or _is_leveraged(r) or _is_index(r): return False
     nm = (r.get("nm","") or "").lower()
     tk = (r.get("tk","") or "").upper()
     # Ticker conocido de RF
@@ -387,8 +426,8 @@ def _is_rf_candidate(r):
     return False
 
 def _is_rv_candidate(r):
-    """Heurística: ¿el resultado parece renta variable? (apalancados sí permitidos)"""
-    if _is_excluded(r): return False       # cripto/commodities no
+    """Heurística: ¿el resultado parece renta variable? (apalancados sí, índices no)"""
+    if _is_excluded(r) or _is_index(r): return False   # cripto/commodities/índices no
     tp = r.get("tp","")
     # Apalancados de equity → sí van en RV
     if _is_leveraged(r): return True
@@ -397,19 +436,17 @@ def _is_rv_candidate(r):
     # ETFs/fondos → solo si NO parece RF
     if tp in ("ETF","MUTUALFUND"):
         return not _is_rf_candidate(r)
-    # Índices → pasan
-    if tp == "INDEX": return True
     return True  # por defecto permitir
 
 def filter_search(results, category):
     """Filtra resultados de búsqueda según la categoría seleccionada."""
     if category == "🔵 Renta variable":
-        # RV: acciones, ETFs de equity y apalancados. No cripto/commodities.
+        # RV: acciones, ETFs de equity y apalancados. No cripto/commodities/índices.
         return [r for r in results if _is_rv_candidate(r)]
     elif category == "🟢 Renta fija":
-        # RF: solo lo que positivamente parece RF, nunca apalancados.
+        # RF: solo lo que positivamente parece RF, nunca apalancados ni índices.
         return [r for r in results if _is_rf_candidate(r)]
-    else:  # Benchmark · permite apalancados; solo bloquea cripto/commodities.
+    else:  # Benchmark: permite índices y apalancados; solo bloquea cripto/commodities.
         return [r for r in results if not _is_excluded(r)]
 
 def do_opt(eq_tickers, rf_tickers, include_fico, views_cfg, eq_t, fi_t, pb, auto=False):
@@ -552,11 +589,13 @@ with st.sidebar:
 
         # ── Inversión ──
         st.markdown("### 💵 Monto a invertir")
-        capital=st.slider("¿Cuánto quieres invertir? (USD)",1_000,1_000_000,100_000,1_000,format="$%d",
+        capital=st.number_input("¿Cuánto quieres invertir? (USD)",min_value=100,max_value=100_000_000,
+                          value=int(st.session_state.get("_capital",100_000)),step=1_000,
                           label_visibility="collapsed",
-                          help="El monto que quieres simular. Puedes cambiarlo cuando quieras.")
-        st.markdown(f"<div style='text-align:center; font-size:1.6rem; font-weight:800; color:#1a3a5c; "
-                    f"margin-top:-6px;'>${capital:,.0f}</div>",unsafe_allow_html=True)
+                          help="Escribe el monto que quieres simular, en dólares.")
+        st.session_state._capital=capital
+        st.markdown(f"<div style='text-align:center; font-size:1.5rem; font-weight:800; color:#1a3a5c; "
+                    f"margin-top:2px;'>${capital:,.0f}</div>",unsafe_allow_html=True)
         st.divider()
         with st.expander("⚙️ Detalles avanzados"):
             _p=RiskProfile.for_split(eq_t,fi_t)
@@ -809,6 +848,24 @@ depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
     has_rf = bool(st.session_state.rf_tickers) or st.session_state.get("include_fico", True)
     has_any_asset = bool(st.session_state.tickers) or has_rf
     can_continue = bool(has_any_asset and st.session_state.benchmarks)
+
+    # Verificar que el monto alcance para al menos una acción de cada una (acciones enteras)
+    if st.session_state.tickers:
+        _precios = fetch_precios(tuple(st.session_state.tickers))
+        if _precios:
+            _suma_min = sum(_precios.values())   # una unidad de cada acción
+            if _suma_min > capital:
+                _detalle = ", ".join(f"{nombre_activo(t)} (${_precios[t]:,.0f})"
+                                     for t in st.session_state.tickers if t in _precios)
+                st.warning(
+                    f"⚠️ **El monto a invertir es menor que el precio de las acciones elegidas.**\n\n"
+                    f"Comprar una unidad de cada acción costaría al menos **${_suma_min:,.0f}**, "
+                    f"pero tu monto es **${capital:,.0f}**.\n\n"
+                    f"Precios actuales: {_detalle}.\n\n"
+                    f"👉 Sube el monto a invertir (en la barra izquierda) a por lo menos "
+                    f"**${_suma_min:,.0f}**, o quita alguna de las acciones más caras."
+                )
+
     if st.session_state.data_range:
         st.success(f"📦 Datos cargados: {st.session_state.data_range}")
 
@@ -1072,7 +1129,7 @@ if show_tab3:
             fig.add_trace(go.Scatter(x=wl.index,y=wl.values,name="Portafolio",
                                     line=dict(color=C_RV,width=2.5)),row=1,col=1)
             for i,(n,v) in enumerate(bw.items()):
-                fig.add_trace(go.Scatter(x=v.index,y=v.values,name=n,
+                fig.add_trace(go.Scatter(x=v.index,y=v.values,name=nombre_activo(n),
                     line=dict(color=BC[i%len(BC)],dash="dash",width=1.5)),row=1,col=1)
             fig.add_trace(go.Scatter(x=dd.index,y=dd.values,name="DD Portafolio",
                                     fill="tozeroy",fillcolor="rgba(214,96,77,0.3)",
@@ -1143,7 +1200,7 @@ if show_tab3:
                 br = st.session_state.bench_rets[n].reindex(pr.index).dropna()
                 bm = _metrics_from_rets(br)
                 if bm is not None:
-                    rows.append((n, bm, False))
+                    rows.append((nombre_activo(n), bm, False))
 
             if len(rows) > 1:
                 # Tabla comparativa
@@ -1215,7 +1272,7 @@ if show_tab3:
                         by = _yearly_returns(bser)
                         figy.add_trace(go.Bar(x=[str(y) for y in years_sorted],
                             y=[by.get(y) for y in years_sorted],
-                            name=n, marker_color=BC[i%len(BC)]))
+                            name=nombre_activo(n), marker_color=BC[i%len(BC)]))
                     figy.update_yaxes(tickformat=".0%")
                     figy.update_layout(barmode="group",height=320,margin=dict(l=0,r=0,t=5,b=0),
                                        legend=dict(orientation="h",y=1.12,font=dict(size=10)))
@@ -1484,7 +1541,7 @@ conjunto de futuros posibles."""
                 for i,(bn,bmap) in enumerate(bench_returns.items()):
                     fig.add_trace(go.Bar(x=names,
                         y=[bmap.get(nm) for nm in names],
-                        name=bn,marker_color=BC[i%len(BC)]))
+                        name=nombre_activo(bn),marker_color=BC[i%len(BC)]))
                 fig.update_yaxes(tickformat=".1%")
                 fig.update_layout(barmode="group",height=340,margin=dict(l=0,r=0,t=5,b=0),
                                   legend=dict(orientation="h",y=1.12,font=dict(size=10)))
