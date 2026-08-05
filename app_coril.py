@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 """Coril SAB · Optimizador BL v7 · Compacto"""
 import numpy as np, pandas as pd, streamlit as st
@@ -1571,3 +1570,4 @@ conjunto de futuros posibles."""
         st.divider()
         _port_step = 1 if AUTO else 2
         nav_buttons(back_to=_port_step, next_label="", back_label="← Volver a Portafolio")
+        
