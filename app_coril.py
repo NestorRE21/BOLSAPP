@@ -633,20 +633,38 @@ def run_dl(period):
     rf_tks=st.session_state.rf_tickers
     # Se necesita al menos un activo (RV o RF de mercado) y un benchmark.
     all_market = list(set(tks + rf_tks))  # sin duplicados
-    if not all_market or not bks: return False
+    if not all_market or not bks:
+        st.session_state["_dl_error"]="Faltan activos o benchmark."
+        return False
     lr=dl_eq(tuple(all_market),period)
-    if lr is None or lr.empty: return False
+    if lr is None or lr.empty:
+        st.session_state["_dl_error"]=f"No se obtuvieron datos de los activos: {', '.join(all_market)}."
+        return False
     bd=dl_bk(tuple(bks),period)
-    if not bd: return False
-    common=lr.index
-    for v in bd.values(): common=common.intersection(v.index)
-    st.session_state.returns=lr.loc[common]; st.session_state.bench_rets={k:v.loc[common] for k,v in bd.items()}
+    if not bd:
+        st.session_state["_dl_error"]=f"No se obtuvieron datos del benchmark: {', '.join(bks)}."
+        return False
+    # Alinear por unión de fechas + forward-fill (tolerante a calendarios distintos
+    # entre EE.UU. y BVL). Antes se usaba intersección estricta, que podía vaciar todo.
+    idx_union = lr.index
+    for v in bd.values():
+        idx_union = idx_union.union(v.index)
+    idx_union = idx_union.sort_values()
+    lr = lr.reindex(idx_union).ffill().dropna(how="all")
+    bd = {k: v.reindex(lr.index).ffill() for k, v in bd.items()}
+    # Quitar filas iniciales donde aún no hay ningún dato
+    lr = lr.dropna(how="all")
+    if lr.empty:
+        st.session_state["_dl_error"]="Los datos quedaron vacíos tras alinear fechas."
+        return False
+    st.session_state.returns=lr; st.session_state.bench_rets={k:v.loc[lr.index] for k,v in bd.items()}
     st.session_state.returns_full=lr; st.session_state.bench_full=bd
-    b=calc_betas(lr.loc[common],list(bd.values())[0].loc[common]); b[FICO_TK]=FICO.beta; st.session_state.betas=b
+    b=calc_betas(lr,list(bd.values())[0].loc[lr.index]); b[FICO_TK]=FICO.beta; st.session_state.betas=b
     ok=[t for t in tks if t in lr.columns]
     s=fetch_sec(tuple(ok)); s[FICO_TK]=FICO.sector; st.session_state.sectors=s
     st.session_state.last_period=period
     st.session_state.data_range=f"{lr.index.min().strftime('%Y-%m-%d')} → {lr.index.max().strftime('%Y-%m-%d')}"
+    st.session_state["_dl_error"]=None
     for k in list(st.session_state.keys()):
         if k.startswith("s_"): del st.session_state[k]
     st.session_state.optimized=False; st.session_state.result=None; st.session_state.manual_weights=None
@@ -1084,7 +1102,8 @@ depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
             if ok:
                 st.session_state.step = 1; st.rerun()
             else:
-                st.error("No se pudieron descargar los datos. Verifica los tickers ingresados.")
+                _err=st.session_state.get("_dl_error") or "Verifica los tickers ingresados."
+                st.error(f"No se pudieron descargar los datos. {_err}")
 
 # ═══════════════════ TAB 2 (solo modo Manual) ═════════════════════════════════
 if show_tab2:
