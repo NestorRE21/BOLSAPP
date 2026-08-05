@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """Coril SAB · Optimizador BL v7 · Compacto"""
 import numpy as np, pandas as pd, streamlit as st
@@ -352,6 +353,63 @@ def fetch_precios(tickers):
     except Exception:
         pass
     return out
+
+def puede_agregar(nuevo_tk, capital):
+    """
+    ¿Agregar `nuevo_tk` a RV mantiene la suma de precios <= capital?
+    Devuelve (ok: bool, precio_nuevo: float|None, suma_actual: float, precio_total: float).
+    Los índices y activos sin precio no cuentan.
+    """
+    actuales = list(st.session_state.tickers)
+    todos = actuales + ([nuevo_tk] if nuevo_tk not in actuales else [])
+    precios = fetch_precios(tuple(todos))
+    suma_actual = sum(precios.get(t,0) for t in actuales)
+    precio_nuevo = precios.get(nuevo_tk)
+    if precio_nuevo is None:
+        # Sin precio disponible → permitir (no podemos verificar)
+        return True, None, suma_actual, suma_actual
+    total = suma_actual + precio_nuevo
+    return (total <= capital), precio_nuevo, suma_actual, total
+
+def acciones_enteras(pesos, precios, capital, fraccionables):
+    """
+    Convierte pesos objetivo (%) en número de acciones ENTERAS a comprar
+    (algoritmo greedy). Los activos 'fraccionables' (Fondo, ETFs de RF)
+    aceptan monto libre y absorben el sobrante.
+
+    Devuelve: (unidades{tk:n}, monto_fracc{tk:$}, efectivo_sobrante, gastado_acciones)
+    """
+    enteros = [a for a in pesos if a not in fraccionables and precios.get(a,0)>0]
+    fracc   = [a for a in pesos if a in fraccionables]
+    objetivo = {a: pesos[a]*capital for a in pesos}
+
+    # Paso 1: compra base (floor)
+    unidades={}; gastado=0.0
+    for a in enteros:
+        p=precios[a]; u=int(objetivo[a]//p); unidades[a]=u; gastado+=u*p
+    restante=capital-gastado
+
+    # Paso 2: greedy — comprar de a una la que más acerca al objetivo
+    mejora=True
+    while mejora and restante>0:
+        mejora=False; mejor_a=None; mejor_g=0.0
+        for a in enteros:
+            p=precios[a]
+            if p>restante: continue
+            actual=unidades[a]*p
+            g=abs(objetivo[a]-actual)-abs(objetivo[a]-(actual+p))
+            if g>mejor_g: mejor_g=g; mejor_a=a
+        if mejor_a is not None:
+            p=precios[mejor_a]; unidades[mejor_a]+=1; restante-=p; gastado+=p; mejora=True
+
+    # Paso 3: el restante va a fraccionables (por peso) o queda como efectivo
+    monto_fracc={}; obj_fracc=sum(objetivo[a] for a in fracc)
+    if fracc and obj_fracc>0:
+        for a in fracc: monto_fracc[a]=restante*(objetivo[a]/obj_fracc)
+        efectivo=0.0
+    else:
+        efectivo=restante
+    return unidades, monto_fracc, efectivo, gastado
 
 @st.cache_data(show_spinner=False,ttl=300)
 def search_yf(q):
@@ -780,11 +838,27 @@ depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
                         tk=r['tk']
                         st.session_state.asset_names[tk]=_nombre   # recordar el nombre real
                         if add_to=="🔵 Renta variable":
-                            if tk not in st.session_state.tickers: st.session_state.tickers.append(tk); st.toast(f"✓ {_nombre} agregado")
+                            if tk not in st.session_state.tickers:
+                                _ok,_pn,_sa,_tot=puede_agregar(tk,capital)
+                                if _ok:
+                                    st.session_state.tickers.append(tk); st.toast(f"✓ {_nombre} agregado")
+                                else:
+                                    st.session_state["_bloqueo_precio"]=(_nombre,_pn,_sa,_tot,capital)
                         elif add_to=="🟢 Renta fija":
                             if tk not in st.session_state.rf_tickers: st.session_state.rf_tickers.append(tk); st.toast(f"✓ {_nombre} agregado")
                         else:
                             if tk not in st.session_state.benchmarks: st.session_state.benchmarks.append(tk); st.toast(f"✓ {_nombre} agregado")
+
+    # Mensaje si se bloqueó una acción por exceder el monto
+    if st.session_state.get("_bloqueo_precio"):
+        _nb,_pn,_sa,_tot,_cap=st.session_state["_bloqueo_precio"]
+        st.error(
+            f"🚫 **No se agregó {_nb}.**\n\n"
+            f"Su precio es **{usd(_pn)}** y, sumado a lo que ya elegiste (**{usd(_sa)}**), "
+            f"llegaría a **{usd(_tot)}**, que supera tu monto de **{usd(_cap)}**.\n\n"
+            f"👉 Sube el monto a invertir en la barra izquierda, o quita alguna acción antes de agregar esta."
+        )
+        del st.session_state["_bloqueo_precio"]
 
     # ── Inversiones populares (un clic, sin conocer tickers) ──────────────
     with st.expander("⭐ ¿No sabes qué agregar? Elige de las inversiones más populares", expanded=not st.session_state.tickers):
@@ -802,7 +876,14 @@ depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
                 ya = tk in st.session_state.get(_dest,[])
                 if st.button(f"{emo} {nombre}"+(" ✓" if ya else ""),
                              key=f"pop_{_dest}_{tk}",use_container_width=True,disabled=ya):
-                    st.session_state[_dest].append(tk); st.toast(f"✓ {nombre} agregado"); st.rerun()
+                    if _dest=="tickers":
+                        _ok,_pn,_sa,_tot=puede_agregar(tk,capital)
+                        if _ok:
+                            st.session_state[_dest].append(tk); st.toast(f"✓ {nombre} agregado"); st.rerun()
+                        else:
+                            st.session_state["_bloqueo_precio"]=(nombre,_pn,_sa,_tot,capital); st.rerun()
+                    else:
+                        st.session_state[_dest].append(tk); st.toast(f"✓ {nombre} agregado"); st.rerun()
 
     if not st.session_state.tickers and not st.session_state.rf_tickers:
         st.info("👇 ¿Primera vez? Pulsa aquí para cargar una cartera de ejemplo con empresas conocidas "
@@ -811,16 +892,29 @@ depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
             st.session_state.tickers=list(EJ); st.session_state.views=[]; st.session_state.rf_tickers=[]
 
     # ── Listas: RV + RF + Benchmarks ─────────────────────────────────────
+    # Precios actuales de las acciones de RV (para mostrar como guía)
+    _precios_rv = fetch_precios(tuple(st.session_state.tickers)) if st.session_state.tickers else {}
+    _suma_rv = sum(_precios_rv.values())
     la,lb,lc=st.columns(3)
     with la:
         st.caption(f"**🔵 Renta variable ({len(st.session_state.tickers)})**")
         for i,t in enumerate(st.session_state.tickers):
             c1,c2=st.columns([5,1])
             _n=nombre_activo(t)
-            c1.write(f"**{_n}**" + (f"  ·  {t}" if _n!=t else ""))
+            _pr=_precios_rv.get(t)
+            _linea=f"**{_n}**" + (f"  ·  {t}" if _n!=t else "")
+            if _pr is not None:
+                _linea += f"<br><span style='color:#7a8ba0; font-size:0.8rem;'>Precio: ${_pr:,.2f}</span>"
+            c1.markdown(_linea, unsafe_allow_html=True)
             if c2.button("✕",key=f"ra{i}"):
                 rm=st.session_state.tickers.pop(i)
                 st.session_state.views=[v for v in st.session_state.views if v.get("asset")!=rm and v.get("long")!=rm and v.get("short")!=rm]
+                st.rerun()
+        if _precios_rv:
+            _color = "#2ca02c" if _suma_rv<=capital else "#d6604d"
+            st.markdown(f"<div style='margin-top:6px; padding-top:6px; border-top:1px solid #e6edf5; "
+                        f"font-size:0.85rem;'>Suma de precios: <b style='color:{_color};'>${_suma_rv:,.2f}</b> "
+                        f"de ${capital:,.0f}</div>", unsafe_allow_html=True)
     with lb:
         st.caption(f"**🟢 Renta fija ({len(st.session_state.rf_tickers)})**")
         # Toggle FICO
@@ -854,15 +948,15 @@ depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
         if _precios:
             _suma_min = sum(_precios.values())   # una unidad de cada acción
             if _suma_min > capital:
-                _detalle = ", ".join(f"{nombre_activo(t)} (${_precios[t]:,.0f})"
+                _detalle = ", ".join(f"{nombre_activo(t)} ({usd(_precios[t])})"
                                      for t in st.session_state.tickers if t in _precios)
                 st.warning(
                     f"⚠️ **El monto a invertir es menor que el precio de las acciones elegidas.**\n\n"
-                    f"Comprar una unidad de cada acción costaría al menos **${_suma_min:,.0f}**, "
-                    f"pero tu monto es **${capital:,.0f}**.\n\n"
+                    f"Comprar una unidad de cada acción costaría al menos **{usd(_suma_min)}**, "
+                    f"pero tu monto es **{usd(capital)}**.\n\n"
                     f"Precios actuales: {_detalle}.\n\n"
                     f"👉 Sube el monto a invertir (en la barra izquierda) a por lo menos "
-                    f"**${_suma_min:,.0f}**, o quita alguna de las acciones más caras."
+                    f"**{usd(_suma_min)}**, o quita alguna de las acciones más caras."
                 )
 
     if st.session_state.data_range:
@@ -1101,6 +1195,49 @@ if show_tab3:
                 else:
                     st.caption("ℹ️ No hay información de sectores disponible para estos activos "
                                "(por ejemplo, si son solo instrumentos de renta fija).")
+
+            # ── PLAN DE COMPRA EN ACCIONES ENTERAS ──────────────────────────
+            st.markdown("##### 🧾 Plan de compra (acciones enteras)")
+            st.caption("Como las acciones se compran completas (no por partes), aquí traducimos "
+                       "los porcentajes en el número exacto de acciones a comprar con tu monto.")
+            _acc_rv=[a for a in wnorm.index if a in st.session_state.tickers]
+            _precios_plan=fetch_precios(tuple(_acc_rv)) if _acc_rv else {}
+            if not _precios_plan:
+                st.info("No hay precios disponibles para calcular el plan de compra "
+                        "(puede pasar si solo tienes renta fija o fondos).")
+            else:
+                # Fraccionables: Fondo de inversión + ETFs de renta fija (aceptan monto libre)
+                _fraccionables=set(st.session_state.rf_tickers) | {FICO_TK}
+                _pesos={a: float(wnorm[a]) for a in wnorm.index}
+                _unid,_mfrac,_efectivo,_gastado=acciones_enteras(_pesos,_precios_plan,capital,_fraccionables)
+                # Construir tabla
+                _filas=[]
+                for a in wnorm.index:
+                    _obj=_pesos[a]*capital
+                    if a in _precios_plan:   # acción entera
+                        _n=_unid.get(a,0); _real=_n*_precios_plan[a]
+                        _filas.append({"Inversión":nombre_activo(a),"Objetivo %":f"{_pesos[a]:.1%}",
+                                       "Precio unit.":f"${_precios_plan[a]:,.2f}","A comprar":f"{_n} acciones",
+                                       "Monto real":f"${_real:,.0f}","% real":f"{_real/capital:.1%}"})
+                    else:                     # fraccionable (Fondo / RF)
+                        _m=_mfrac.get(a,_obj)
+                        _filas.append({"Inversión":nombre_activo(a),"Objetivo %":f"{_pesos[a]:.1%}",
+                                       "Precio unit.":"—","A comprar":"monto libre",
+                                       "Monto real":f"${_m:,.0f}","% real":f"{_m/capital:.1%}"})
+                st.dataframe(pd.DataFrame(_filas),use_container_width=True,hide_index=True)
+                _invertido=capital-_efectivo
+                pcol1,pcol2,pcol3=st.columns(3)
+                pcol1.metric("💰 Total invertido",f"${_invertido:,.0f}",delta=f"{_invertido/capital:.1%} del monto")
+                pcol2.metric("🏦 En acciones",f"${_gastado:,.0f}")
+                pcol3.metric("💵 Efectivo sin invertir",f"${_efectivo:,.0f}",
+                             delta=None if _efectivo<1 else f"{_efectivo/capital:.1%}",delta_color="off")
+                if _efectivo>=1:
+                    st.caption(f"💡 Quedan **${_efectivo:,.0f}** sin invertir porque no alcanzan para otra "
+                               "acción entera. Si tuvieras un fondo o instrumento de renta fija, ese sobrante "
+                               "se colocaría ahí automáticamente.")
+                else:
+                    st.caption("✅ Todo tu monto queda invertido: el sobrante de las acciones se coloca "
+                               "en el Fondo de inversión / renta fija, que aceptan montos libres.")
 
             # Evolución histórica — filtrada por chart_years, siempre desde capital inicial
             st.markdown("##### 📈 Evolución histórica del capital")
@@ -1570,4 +1707,3 @@ conjunto de futuros posibles."""
         st.divider()
         _port_step = 1 if AUTO else 2
         nav_buttons(back_to=_port_step, next_label="", back_label="← Volver a Portafolio")
-        
