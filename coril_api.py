@@ -66,19 +66,29 @@ def api_configurada() -> bool:
     return bool(_secret("CORIL_API_AUTH"))
 
 
-# ─────────────────────── Detección de país ────────────────────────────────
-# Heurística: los símbolos peruanos de la BVL siguen un patrón (letras + C1/I1/etc).
-# Las acciones de EE.UU. son tickers cortos alfabéticos (AAPL, MSFT).
-# Ajustable según lo que confirme el equipo de Coril.
-def detectar_pais(symbol: str) -> str:
+# ─────────────────────── Detección de mercado ─────────────────────────────
+def es_bvl(symbol: str) -> bool:
+    """
+    ¿El símbolo es de la Bolsa de Valores de Lima (BVL / mercado peruano)?
+
+    Heurística: los nemónicos de la BVL son largos y terminan en un dígito
+    (BUENAVC1, MINSURI1, AENZAC1, ALICORC1...). Los tickers de EE.UU. son
+    cortos y solo letras (AAPL, MSFT, KO, QQQ). Los índices (^GSPC) no son BVL.
+
+    Ajustable: si el equipo de Coril define otra convención, se cambia aquí.
+    """
     s = (symbol or "").upper().strip()
-    # Símbolos peruanos típicos terminan en C1, I1, B1, etc. o son largos
-    if len(s) >= 7 and s[-2:] in {"C1", "I1", "B1", "A1", "P1", "T1"}:
-        return "PER"
-    if s.startswith("^"):
-        return "USA"   # índices se tratan aparte
-    # Por defecto, tickers cortos alfabéticos → EE.UU.
-    return "USA"
+    if not s or s.startswith("^"):
+        return False
+    # Nemónico BVL: 6+ caracteres y termina en dígito (ej. ...C1, ...I1)
+    if len(s) >= 6 and s[-1].isdigit():
+        return True
+    return False
+
+
+def detectar_pais(symbol: str) -> str:
+    """País de mercado para la API de Coril ('PER' o 'USA')."""
+    return "PER" if es_bvl(symbol) else "USA"
 
 
 # ─────────────────────── Descarga de histórico ────────────────────────────
