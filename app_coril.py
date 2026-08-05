@@ -287,8 +287,13 @@ def dl_eq(tickers,period="15y"):
             if px_bvl is not None and not px_bvl.empty:
                 lr_bvl=np.log(px_bvl/px_bvl.shift(1)).replace([np.inf,-np.inf],np.nan).dropna(how="all")
                 frames.append(lr_bvl)
-        except Exception:
-            pass  # si la API falla, se continúa sin las BVL en vez de romper
+                st.session_state["_bvl_diag"]=f"BVL OK: {list(px_bvl.columns)} · {len(px_bvl)} días"
+            else:
+                st.session_state["_bvl_diag"]=f"BVL vacío para {bvl}: precios_diarios devolvió sin datos."
+        except Exception as e:
+            st.session_state["_bvl_diag"]=f"BVL error para {bvl}: {type(e).__name__}: {e}"
+    elif bvl:
+        st.session_state["_bvl_diag"]=f"BVL {bvl} detectado pero coril_api sin precios_diarios (módulo viejo)."
 
     if not frames: return None
     # Combinar por fecha (outer join) y rellenar huecos de alineación
@@ -1104,6 +1109,10 @@ depende de tu **perfil de riesgo** (lo ajustas en la barra izquierda)."""
             else:
                 _err=st.session_state.get("_dl_error") or "Verifica los tickers ingresados."
                 st.error(f"No se pudieron descargar los datos. {_err}")
+            # Diagnóstico BVL (temporal, para depurar la conexión Coril)
+            _bvl_diag=st.session_state.get("_bvl_diag")
+            if _bvl_diag:
+                st.info(f"🔍 Diagnóstico BVL: {_bvl_diag}")
 
 # ═══════════════════ TAB 2 (solo modo Manual) ═════════════════════════════════
 if show_tab2:
