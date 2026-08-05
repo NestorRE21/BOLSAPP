@@ -1,11 +1,13 @@
 # Coril BL Optimizer — Streamlit Community Cloud (Python 3.14)
 # Versiones con wheels precompilados para Python 3.14 (no compilan desde fuente).
-# pandas >=2.3.3 es la primera compatible con 3.14; numpy >=2.3 y scipy/sklearn recientes.
-streamlit>=1.40
+#
+# IMPORTANTE: Streamlit se fija a un rango estable. La versión 1.61.0 tiene un
+# bug interno (GZipResponder.__init__() missing 'thread_minimum_size') que impide
+# arrancar el servidor. Fijamos <1.60 para evitarla hasta que se corrija.
+streamlit>=1.50,<1.60
 numpy>=2.3
 pandas>=2.3.3
 scipy>=1.14
 scikit-learn>=1.6
 yfinance>=0.2.50
 plotly>=5.24
- 
