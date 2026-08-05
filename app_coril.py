@@ -157,7 +157,7 @@ h4 { font-size: 1.35rem !important; }
 [data-testid="stNotificationContentSuccess"] { font-size: 0.98rem; }
 </style>
 """, unsafe_allow_html=True)
-RF,PPY = 0.02,52
+RF,PPY = 0.02,252   # PPY=252 días hábiles al año (datos diarios)
 FICO_TK = "FICCMP13"
 FICO_DISPLAY = "Fondo de inversión"
 FICO = ForcedAsset(ret_annual=0.0625,vol_annual=0.010,beta=0.30,sector="Factoring",region="Perú",moneda="USD",instrumento="Fondo")
@@ -268,21 +268,27 @@ def dl_eq(tickers,period="15y"):
     ext = [t for t in tickers if t not in bvl]
 
     frames=[]
-    # Extranjeras por yfinance (semanal, como siempre)
+    # Extranjeras por yfinance (DIARIO, con forward-fill de días sin precio)
     if ext:
         params = _yf_period(period)
-        raw=yf.download(ext,**params,interval="1wk",auto_adjust=True,progress=False)
+        raw=yf.download(ext,**params,interval="1d",auto_adjust=True,progress=False)
         if raw is not None and not raw.empty:
             px=raw["Close"].copy() if isinstance(raw.columns,pd.MultiIndex) else raw[["Close"]].rename(columns={"Close":ext[0]})
-            px=px.dropna(how="all").ffill(); px.index=pd.to_datetime(px.index).tz_localize(None)
+            px=px.dropna(how="all"); px.index=pd.to_datetime(px.index).tz_localize(None)
+            # Forward-fill sobre calendario diario hábil (arrastra precio del día anterior)
+            cal=pd.date_range(px.index.min(),px.index.max(),freq="B")
+            px=px.reindex(cal).ffill()
             lr_ext=np.log(px/px.shift(1)).replace([np.inf,-np.inf],np.nan).dropna(how="all")
             frames.append(lr_ext)
-    # BVL por API de Coril (diario → semanal, con forward-fill)
-    if bvl:
-        px_bvl=coril_api.precios_semanales(bvl)
-        if not px_bvl.empty:
-            lr_bvl=np.log(px_bvl/px_bvl.shift(1)).replace([np.inf,-np.inf],np.nan).dropna(how="all")
-            frames.append(lr_bvl)
+    # BVL por API de Coril (DIARIO, con forward-fill)
+    if bvl and hasattr(coril_api, "precios_diarios"):
+        try:
+            px_bvl=coril_api.precios_diarios(bvl)
+            if px_bvl is not None and not px_bvl.empty:
+                lr_bvl=np.log(px_bvl/px_bvl.shift(1)).replace([np.inf,-np.inf],np.nan).dropna(how="all")
+                frames.append(lr_bvl)
+        except Exception:
+            pass  # si la API falla, se continúa sin las BVL en vez de romper
 
     if not frames: return None
     # Combinar por fecha (outer join) y rellenar huecos de alineación
@@ -296,13 +302,25 @@ def dl_bk(tks,period="15y"):
     for b in tks:
         b=b.strip().upper()
         if not b: continue
+        # Benchmark BVL por Coril
+        if CORIL_OK and coril_api.es_bvl(b) and hasattr(coril_api,"precios_diarios"):
+            try:
+                pxb=coril_api.precios_diarios([b])
+                if pxb is not None and not pxb.empty:
+                    p=pxb.iloc[:,0]
+                    lr=np.log(p/p.shift(1)).replace([np.inf,-np.inf],np.nan).dropna(); lr.name=b; out[b]=lr
+                    continue
+            except Exception: pass
+        # Benchmark internacional por yfinance (DIARIO con forward-fill)
         try:
             params = _yf_period(period)
-            raw=yf.download(b,**params,interval="1wk",auto_adjust=True,progress=False)
+            raw=yf.download(b,**params,interval="1d",auto_adjust=True,progress=False)
             if isinstance(raw.columns,pd.MultiIndex): raw.columns=raw.columns.get_level_values(0)
-            p=raw["Close"]; 
+            p=raw["Close"]
             if isinstance(p,pd.DataFrame): p=p.iloc[:,0]
             p.index=pd.to_datetime(p.index).tz_localize(None)
+            cal=pd.date_range(p.index.min(),p.index.max(),freq="B")
+            p=p.reindex(cal).ffill()
             lr=np.log(p/p.shift(1)).replace([np.inf,-np.inf],np.nan).dropna(); lr.name=b; out[b]=lr
         except: pass
     return out
@@ -715,7 +733,8 @@ with st.sidebar:
             st.caption(f"Fondo de inversión: {FICO.ret_annual:.2%} anual")
             st.caption(f"Beta objetivo: {_p.beta_min:.2f} a {_p.beta_max:.2f}")
             st.caption(f"Caída máxima tolerada: {_p.max_drawdown:.0%}")
-            st.caption("Los cálculos usan 15 años de datos históricos.")
+            st.caption("Los cálculos usan datos diarios (hasta 15 años en instrumentos "
+                       "internacionales; 5 años en acciones de la BVL).")
 
         with st.expander("🔧 Probar conexión Coril (BVL)"):
             if not CORIL_OK:
