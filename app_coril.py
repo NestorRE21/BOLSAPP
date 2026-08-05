@@ -6,6 +6,15 @@ from plotly.subplots import make_subplots
 from optimizer import RiskProfile, ForcedAsset, View, BLConfig, run_profile, GKConfig, generate_gk_views, estimate_covariance, inject_forced_assets
 from projections import monte_carlo, stress_test, CRISIS_PERIODS
 
+# Módulo de la API de Coril (BVL). Import protegido: si falta, la app sigue con yfinance.
+try:
+    import coril_api
+    CORIL_OK = True
+except Exception:
+    coril_api = None
+    CORIL_OK = False
+
+
 st.set_page_config(page_title="Simulador de inversiones · Coril SAB", page_icon="📈", layout="wide")
 
 # ═══════════════════ ESTILO VISUAL PERSONALIZADO ══════════════════════════════
@@ -659,6 +668,29 @@ with st.sidebar:
             st.caption(f"Beta objetivo: {_p.beta_min:.2f} a {_p.beta_max:.2f}")
             st.caption(f"Caída máxima tolerada: {_p.max_drawdown:.0%}")
             st.caption("Los cálculos usan 15 años de datos históricos.")
+
+        with st.expander("🔧 Probar conexión Coril (BVL)"):
+            if not CORIL_OK:
+                st.error("El módulo coril_api.py no está disponible. Súbelo al repositorio.")
+            elif not coril_api.api_configurada():
+                st.warning("Faltan las credenciales. Configúralas en Settings → Secrets "
+                           "(CORIL_API_BASE, CORIL_API_AUTH, CORIL_USER_ID).")
+            else:
+                st.caption("Prueba la descarga de una acción peruana desde la API de Coril.")
+                _sym_test=st.text_input("Símbolo BVL de prueba",value="MINSURI1",key="coril_test_sym")
+                if st.button("Probar descarga",key="coril_test_btn",use_container_width=True):
+                    with st.spinner("Consultando la API de Coril…"):
+                        _serie=coril_api.descargar_historico(_sym_test.strip().upper())
+                    if _serie is None or len(_serie)<2:
+                        st.error(f"No se obtuvo histórico para {_sym_test}. "
+                                 "Verifica el símbolo (en mayúsculas) y las credenciales.")
+                    else:
+                        st.success(f"✅ Conexión OK · {len(_serie)} días de datos")
+                        st.caption(f"Desde {_serie.index.min().date()} hasta {_serie.index.max().date()}")
+                        st.caption(f"Último precio: {_serie.iloc[-1]:,.2f}")
+                        st.line_chart(_serie)
+                        _p_now=coril_api.precio_actual(_sym_test.strip().upper())
+                        if _p_now: st.caption(f"Precio actual (endpoint): {_p_now:,.2f}")
 
 # Descargar siempre con 15 años (fijo)
 OPT_PERIOD = "15y"
