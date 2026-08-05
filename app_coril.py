@@ -1214,43 +1214,57 @@ if show_tab3:
 
                 st.markdown("**🔵 Acciones (se compran por unidades enteras)**")
                 _filas_acc=[]
+                _monto_optimo_acc=0.0   # costo de comprar el óptimo completo (acciones)
+                _monto_alcanza_acc=0.0  # costo de lo que sí alcanza
                 for a in wnorm.index:
                     if a not in _precios_plan: continue
                     _precio=_precios_plan[a]
-                    _obj_monto=_pesos[a]*capital           # cuánto dinero pide el óptimo
-                    _ideal=_obj_monto/_precio               # acciones ideales (con decimales)
-                    _real_n=_unid.get(a,0)                  # acciones enteras que compras
-                    _real_monto=_real_n*_precio
-                    _falta=_ideal-_real_n                   # cuántas quedaron sin comprar (fracción)
-                    _texto_falta = f"{_falta:.2f}" if _falta>=0.05 else "—"
+                    _obj_monto=_pesos[a]*capital            # dinero que pide el óptimo
+                    _ideal=_obj_monto/_precio                # acciones ideales (con decimales)
+                    _necesarias=max(1,round(_ideal)) if _pesos[a]>1e-4 else 0  # óptimo en enteros
+                    _alcanzan=_unid.get(a,0)                 # las que caben con tu monto
+                    _monto_optimo_acc += _necesarias*_precio
+                    _monto_alcanza_acc += _alcanzan*_precio
                     _filas_acc.append({
                         "Empresa": nombre_activo(a),
                         "Precio x acción": f"${_precio:,.2f}",
-                        "Ideal (según %)": f"{_ideal:.2f}",
-                        "Vas a comprar": f"{_real_n}",
-                        "Te faltó": _texto_falta,
-                        "Inversión real": f"${_real_monto:,.0f}",
+                        "Necesarias (óptimo)": f"{_necesarias}",
+                        "Te alcanzan": f"{_alcanzan}",
+                        "Faltan por comprar": f"{max(0,_necesarias-_alcanzan)}",
+                        "Costo del óptimo": f"${_necesarias*_precio:,.0f}",
                     })
                 if _filas_acc:
                     st.dataframe(pd.DataFrame(_filas_acc),use_container_width=True,hide_index=True)
-                    st.caption("**Cómo leer la tabla:** *Ideal* es cuántas acciones te tocarían según el "
-                               "porcentaje óptimo (con decimales). *Vas a comprar* es el número redondo que "
-                               "realmente comprarías. *Te faltó* es la fracción que no se pudo comprar porque "
-                               "no se venden partes de acción — es una diferencia pequeña y normal.")
+                    st.caption("**Cómo leer la tabla:** *Necesarias* son las acciones que tendrías que "
+                               "comprar de cada empresa para armar el portafolio óptimo. *Te alcanzan* son "
+                               "las que puedes comprar con tu monto actual. *Faltan por comprar* es la "
+                               "diferencia que te queda pendiente por falta de dinero.")
 
                 # Fraccionables (Fondo / RF): se muestran aparte porque sí aceptan montos exactos
                 _filas_frac=[]
+                _monto_frac=0.0
                 for a in wnorm.index:
                     if a in _precios_plan: continue
-                    _m=_mfrac.get(a,_pesos[a]*capital)
+                    _m_obj=_pesos[a]*capital          # monto óptimo para este instrumento
+                    _monto_frac += _m_obj
                     _filas_frac.append({
                         "Instrumento": nombre_activo(a),
                         "Objetivo %": f"{_pesos[a]:.1%}",
-                        "Monto a invertir": f"${_m:,.0f}",
+                        "Monto a invertir": f"${_mfrac.get(a,_m_obj):,.0f}",
                     })
                 if _filas_frac:
                     st.markdown("**🟢 Renta fija y fondos (se invierte el monto exacto, sin comprar unidades)**")
                     st.dataframe(pd.DataFrame(_filas_frac),use_container_width=True,hide_index=True)
+
+                # ── Monto mínimo para el portafolio óptimo completo ──
+                # El óptimo completo = costo de las acciones necesarias + la parte de RF/fondos,
+                # escalada para mantener las proporciones del perfil.
+                _peso_acc=sum(_pesos[a] for a in wnorm.index if a in _precios_plan)
+                if _peso_acc>1e-6:
+                    # Si las acciones deben representar _peso_acc del total, el total mínimo es:
+                    _monto_minimo = _monto_optimo_acc / _peso_acc
+                else:
+                    _monto_minimo = _monto_optimo_acc + _monto_frac
 
                 st.markdown("**Resumen**")
                 _invertido=capital-_efectivo
@@ -1259,15 +1273,25 @@ if show_tab3:
                 pcol2.metric("🏦 En acciones",f"${_gastado:,.0f}")
                 pcol3.metric("💵 Te sobra (efectivo)",f"${_efectivo:,.0f}",
                              delta=None if _efectivo<1 else f"{_efectivo/capital:.1%}",delta_color="off")
-                if _efectivo>=1:
-                    st.warning(f"💡 Te sobran **{usd(_efectivo)}** que no alcanzan para comprar otra acción "
-                               "entera. Como no tienes un fondo o renta fija donde colocarlos, ese dinero "
-                               "quedaría sin invertir. Podrías subir el monto o agregar el Fondo de inversión "
-                               "para aprovechar ese sobrante.")
+
+                # Mensaje sobre el monto mínimo
+                if _monto_minimo > capital*1.08:   # margen del 8% para redondeos de acciones enteras
+                    _falta_dinero=_monto_minimo-capital
+                    st.warning(
+                        f"📌 **Para armar el portafolio óptimo completo necesitas al menos "
+                        f"{usd(_monto_minimo)}.**\n\n"
+                        f"Con tu monto actual de {usd(capital)} te faltan aproximadamente "
+                        f"**{usd(_falta_dinero)}** para comprar todas las acciones necesarias "
+                        f"en las proporciones ideales. Puedes subir el monto a invertir, o quedarte "
+                        f"con la cartera que sí alcanza (mostrada arriba)."
+                    )
                 else:
-                    st.success("✅ **Todo tu dinero queda invertido.** El sobrante de las acciones "
-                               "(lo que no alcanzó para una acción más) se coloca automáticamente en el "
-                               "Fondo de inversión / renta fija, que sí aceptan cualquier monto.")
+                    st.success(
+                        f"✅ **Tu monto de {usd(capital)} alcanza para armar el portafolio óptimo "
+                        f"completo** (costo mínimo aproximado: {usd(_monto_minimo)}). "
+                        f"El sobrante se coloca en el Fondo de inversión / renta fija."
+                    )
+
 
 
             # Evolución histórica — filtrada por chart_years, siempre desde capital inicial
