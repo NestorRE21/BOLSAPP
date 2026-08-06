@@ -8,11 +8,15 @@ from projections import monte_carlo, stress_test, CRISIS_PERIODS
 
 # Módulo de la API de Coril (BVL). Import protegido: si falta, la app sigue con yfinance.
 try:
+    import importlib
     import coril_api
+    importlib.reload(coril_api)   # fuerza recarga fresca (evita caché de módulo viejo)
     CORIL_OK = True
-except Exception:
+    _CORIL_IMPORT_ERR = None
+except Exception as _e:
     coril_api = None
     CORIL_OK = False
+    _CORIL_IMPORT_ERR = f"{type(_e).__name__}: {_e}"
 
 
 st.set_page_config(page_title="Simulador de inversiones · Coril SAB", page_icon="📈", layout="wide")
@@ -760,6 +764,14 @@ with st.sidebar:
                        "internacionales; 5 años en acciones de la BVL).")
 
         with st.expander("🔧 Probar conexión Coril (BVL)"):
+            if _CORIL_IMPORT_ERR:
+                st.error(f"Error al importar coril_api: {_CORIL_IMPORT_ERR}")
+            if CORIL_OK:
+                import os as _os
+                _ruta=getattr(coril_api,"__file__","(desconocida)")
+                _tiene_pd=hasattr(coril_api,"precios_diarios")
+                st.caption(f"Módulo: `{_os.path.basename(_ruta)}` · "
+                           f"precios_diarios: {'✅' if _tiene_pd else '❌ FALTA'}")
             if not CORIL_OK:
                 st.error("El módulo coril_api.py no está disponible. Súbelo al repositorio.")
             elif not coril_api.api_configurada():
